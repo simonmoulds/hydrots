@@ -1,4 +1,13 @@
 
+from abc import ABC, abstractmethod
+from typing import Optional, Dict, List
+
+from .hydrots import HydroTS
+
+class TSDynamicModel(ABC):
+    def __init__(self):
+        pass 
+
 class TSMARRMoTModel:
 
     def __init__(self): 
