@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, Dict, List
 
 from .validator import TSValidator
+# from .summary import TSSummary
 
 class HydroTS: 
 
@@ -30,6 +31,8 @@ class HydroTS:
         self.freq = freq 
         self.data = self._format_data(data, use_local_water_year, use_water_year) 
         self.metadata = self._format_metadata(metadata)
+
+        # TODO change type of validator depending on application
         self.validator = TSValidator(self.data, self.data_columns, self.freq)
 
     def update_validity_criteria(self, **kwargs): 
@@ -206,6 +209,9 @@ class HydroTS:
     def n_years(self):
         return len(self.valid_years)
 
-    @property 
-    def summary(self):
-        return TSSummary(self)
+    # @property 
+    # def summary(self):
+    #     return TSSummary(self)
+
+    def __len__(self): 
+        return self.data.shape[0]

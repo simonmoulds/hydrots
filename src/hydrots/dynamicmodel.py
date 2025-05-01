@@ -1,677 +1,381 @@
 
+import numpy as np
+import pandas as pd 
+
+from scipy.optimize import root, fmin, minimize, newton
+
+from bmipy import Bmi
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, List
+from dataclasses import dataclass, field
 
-from .hydrots import HydroTS
+from hydrots.timeseries import HydroTS
+from hydrots.parameters import Ihacres7p1sParams, Hymod5p5sParams
+from hydrots.newtonraphson import NewtonRaphsonSolver
+from hydrots import unithydrographs as uh
+from hydrots import fluxes 
 
-class TSDynamicModel(ABC):
+@dataclass
+class SolverData:
+    resnorm: np.ndarray
+    solver: pd.Categorical
+    iter: np.ndarray
+
+    @classmethod
+    def create(cls, t_end: int) -> "SolverData":
+        """Factory method to create empty SolverData."""
+        return cls(
+            resnorm=np.zeros(t_end),
+            solver=pd.Categorical(np.zeros(t_end, dtype=int)),
+            iter=np.zeros(t_end)
+        )
+
+@dataclass
+class SolverOptions: 
+    resnorm_maxiter: int
+    resnorm_tolerance: float
+
+
+class TSDynamicModel: #(Bmi):
+
     def __init__(self):
+        self.initialize()
+
+    def initialize(self):
+        """Initializes stores, fluxes, and solver tracking arrays."""
+        
+        self.store_min: np.ndarray = np.zeros(self.num_stores)
+        self.store_max: np.ndarray = np.full(self.num_stores, np.inf)
+
+        t_end = len(self.forcing)
+
+        self.stores = pd.DataFrame(np.zeros((t_end, self.num_stores)), columns=self.store_names)
+        self.fluxes = pd.DataFrame(np.zeros((t_end, self.num_fluxes)), columns=self.flux_names)
+        self.output = pd.DataFrame(np.zeros((t_end, self.num_outputs)), columns=self.output_names)
+
+        self.solver_data_cls = SolverData
+        self.solver_data = self.solver_data_cls.create(t_end)
+
+    def reset(self): 
+        pass
+
+    def ODE_approx_IE(self, S: np.ndarray) -> np.ndarray:
+        """ODE approximation with Implicit Euler time-stepping scheme.
+
+        Args:
+            S (np.ndarray): Current store state (any shape, will be flattened internally).
+
+        Returns:
+            np.ndarray: Error/residual of the Implicit Euler step.
+        """
+        S = np.asarray(S).flatten()  # ensure S is 1D
+        delta_S, _ = self.model_fun(S)  # assumes model_fun(S) -> np.ndarray
+
+        if self.t == 0:
+            Sold = self.initial_conditions.flatten()
+        else:
+            Sold = self.stores.iloc[(self.t-1)].to_numpy()
+
+        err = (S - Sold) / self.delta_t - delta_S
+        return err
+
+    def solve_stores(self, Sold): 
+        """Solve the stores ODEs for the current time step."""
+ 
+        # Dynamic tolerance
+        resnorm_tolerance = self.solver_opts.resnorm_tolerance * min(min(abs(Sold)) + 1e-5, 1)
+
+        # Prepare arrays to store solutions
+        Snew_v = np.zeros((3, self.num_stores))
+        resnorm_v = np.full(3, np.inf)
+        iter_v = np.ones(3)
+
+        # # This works too
+        # tmp_Snew = newton(self.ODE_approx_IE, Sold)
+
+        solver = NewtonRaphsonSolver(self.ODE_approx_IE, Sold)
+        tmp_Snew, tmp_fval, _ = solver.solve()
+        tmp_resnorm = np.sum(tmp_fval**2)
+        Snew_v[0, :] = tmp_Snew
+        resnorm_v[0] = tmp_resnorm
+        # iter_v[0] = tmp_iter
+
+        # Matlab function:
+        # [tmp_Snew, tmp_fval] = ...
+        #             NewtonRaphson(@obj.ODE_approx_IE,...
+        #                             Sold,...
+        #                             solver_opts.NewtonRaphson);
+
+        # TODO Implement these methods [look up rerunSolver(...) to see how to initialize]
+        # # 2 - If needed, try fsolve equivalent (hybr again or 'lm')
+        # if tmp_resnorm > resnorm_tolerance:
+        #     tmp_Snew, tmp_fval, success, tmp_iter = self.solve_with_method(
+        #         obj.ODE_approx_IE, tmp_Snew, method=self.methods[1], tol=solver_opts['fsolve']['tol']
+        #     )
+        #     tmp_resnorm = np.sum(tmp_fval**2)
+        #     Snew_v[1, :] = tmp_Snew
+        #     resnorm_v[1] = tmp_resnorm
+        #     iter_v[1] = tmp_iter
+        #     # 3 - If still needed, try lsqnonlin equivalent (lm again)
+        #     if tmp_resnorm > resnorm_tolerance:
+        #         tmp_Snew, tmp_fval, success, tmp_iter = self.solve_with_method(
+        #             obj.ODE_approx_IE, tmp_Snew, method=self.methods[2], tol=solver_opts['lsqnonlin']['tol']
+        #         )
+        #         tmp_resnorm = np.sum(tmp_fval**2)
+        #         Snew_v[2, :] = tmp_Snew
+        #         resnorm_v[2] = tmp_resnorm
+        #         iter_v[2] = tmp_iter
+
+        # 4 - Pick the best solution
+        solver_id = np.argmin(resnorm_v)
+        Snew = Snew_v[solver_id, :]
+        resnorm = resnorm_v[solver_id]
+        # iter_ = iter_v[solver_id]
+
+        # return Snew, resnorm, solver, iter_
+        return Snew, resnorm #, None, #iter_
+
+    def run(self, params = None, initial_conditions = None): 
+
+        if params: 
+            self.params.update(params)
+
+        # FIXME define proper update method
+        if initial_conditions: 
+            self.initial_conditions = np.array(initial_conditions).flatten()
+
+        # initialize() runs before each model run to initialise,
+        # store limits, auxiliary parameters etc.
+        self.initialize()
+
+        t_end = len(self.forcing) 
+        for t in range(t_end): 
+            self.t = t # Update time step
+            if t == 0: 
+                Sold = self.initial_conditions
+            else: 
+                Sold = self.stores.iloc[(t-1)].to_numpy()
+
+            Snew, resnorm = self.solve_stores(Sold)
+            dS, f = self.model_fun(Snew)
+
+            self.fluxes.iloc[t] = f * self.delta_t
+            self.stores.iloc[t] = Sold + dS * self.delta_t
+            
+            self.solver_data.resnorm[t] = resnorm
+            # self.solver_data.solver[t] = solver
+            # self.solver_data.iter[t] = iter
+
+            self.step()
+
+        self.status = 1
+
+    def get_output(self): 
         pass 
 
-class TSMARRMoTModel:
+    # def get_streamflow(self): 
+    #     # FIXME does this function actually run the model?
+    #     return self.input_climate.data['Q'].values 
 
-    def __init__(self): 
+    # def loss_function(self, objective_function, **kwargs): 
+    #     Qsim = self.run()
+    #     Qobs = None # FIXME
+    #     return objective_function(Qsim, Qobs, **kwargs)
 
-        # Static attributes, set for each model in the model definition
-        self.numStores 
-        self.numFluxes
-        self.numParams 
-        self.parRanges
-        self.JacobPattern 
-        self.StoreNames 
-        self.FluxNames 
-        self.FluxGroups 
-        self.StoreSigns 
+    # def calibrate(self, 
+    #               start, 
+    #               end, 
+    #               optim_fun, 
+    #               optim_opts, 
+    #               objective_function, 
+    #               inverse, 
+    #               **kwargs):
+    #     # def calibrate(self, method='L-BFGS-B'):
+    #     initial = self.parameters.get_initial()
+    #     bounds = self.parameters.get_bounds()
+    #     result = minimize(
+    #         self.loss_function,
+    #         initial,
+    #         method=method,
+    #         bounds=bounds
+    #     )
+    #     if result.success:
+    #         self.parameters.update_calibrated(result.x)
+    #     else:
+    #         raise RuntimeError(f"Calibration failed: {result.message}")
+    #     # # TODO Define a Parameter class to store model parameters - this 
+    #     # # would have the parameter range and initial value
+    #     # # TODO Select data based on start:end
+    #     # par_ini = (0, 1) # FIXME
+    #     # result = fmin(, par_ini, args=(...)) # FIXME
+    #     # if inverse: 
+    #     #     gof = 1 / gof # Correct?
+
+    @abstractmethod
+    def init(self): 
+        pass 
+
+    @abstractmethod
+    def model_fun(self): 
+        pass 
+
+    @abstractmethod 
+    def step(self): 
+        pass 
+
+class Hymod5p5s(TSDynamicModel): 
+
+    def __init__(self, params: Ihacres7p1sParams, initial_conditions: List, forcing: pd.DataFrame, delta_t: float, solver_opts: SolverOptions): 
+
+        self.params = params 
+        self.initial_conditions = initial_conditions
+        self.forcing = forcing
+        self.delta_t = delta_t
+        self.solver_opts = solver_opts
+
+        self.store_names = ["S1", "S2", "S3", "S4", "S5"]
+        self.flux_names = ["ea", "pe", "pf", "ps", "qf1", "qf2", "qf3", "qs"]
+        self.output_names = ["Q", "Ea"]
+
+        self.num_params = len(self.params)
+        self.num_stores = len(self.store_names)
+        self.num_fluxes = len(self.flux_names)
+        self.num_outputs = len(self.output_names)
+        self.jacob_pattern = np.array([
+            [1, 0, 0, 0, 0],
+            [1, 1, 0, 0, 0],
+            [0, 1, 1, 0, 0],
+            [0, 0, 1, 1, 0],
+            [1, 0, 0, 0, 1]
+        ])
+
+        # self.flux_groups = {
+        #     'Ea': 0, # Index/indices of fluxes to add to AET (adjusted for zero-indexing)
+        #     'Q': [6, 7] # Index/indices of fluxes to add to streamflow (adjusted for zero-indexing)
+        # }
+        # self.store_signs = None
+
+    def initialize(self): 
+        super().initialize()
+
+    def model_fun(self, S): 
+
+        smax = self.params.values[0]
+        b = self.params.values[1]
+        a = self.params.values[2]
+        kf = self.params.values[3]
+        ks = self.params.values[4]
+
+        S1 = S[0] 
+        S2 = S[1]
+        S3 = S[2]
+        S4 = S[3]
+        S5 = S[4]
+
+        # t = obj.t;                             % this time step
+        # climate_in = obj.input_climate(t,:);   % climate at this step
+        forcing_in = self.forcing.iloc[self.t]
+        P = forcing_in['P']
+        Ep = forcing_in['Ep']
+        T = forcing_in['T'] 
+
+        # Fluxes functions
+        flux_ea = fluxes.evap_7(S1, smax, Ep, self.delta_t)
+        flux_pe = fluxes.saturation_2(S1, smax, b, P)
+        flux_pf = fluxes.split_1(a, flux_pe)
+        flux_ps = fluxes.split_1(1-a, flux_pe)
+        flux_qf1 = fluxes.baseflow_1(kf, S2)
+        flux_qf2 = fluxes.baseflow_1(kf, S3)
+        flux_qf3 = fluxes.baseflow_1(kf, S4)
+        flux_qs = fluxes.baseflow_1(ks, S5)
+
+        # Stores 
+        dS1 = P - flux_ea - flux_pe 
+        dS2 = flux_pf - flux_qf1 
+        dS3 = flux_qf1 - flux_qf2 
+        dS4 = flux_qf2 - flux_qf3 
+        dS5 = flux_ps - flux_qs
+
+        # Outputs 
+        dS = np.array([dS1, dS2, dS3, dS4, dS5]).flatten()
+        flux = np.array([flux_ea, flux_pe, flux_pf, flux_ps, flux_qf1, flux_qf2, flux_qf3, flux_qs]).flatten()
+        return dS, flux
+
+    def step(self):
+        self.output.iat[self.t, self.output.columns.get_loc('Q')] = self.fluxes.iloc[self.t][["qf3", "qs"]].sum()
+        self.output.iat[self.t, self.output.columns.get_loc('Ea')] = self.fluxes.iloc[self.t]["ea"]
+
+
+# class Ihacres7p1s(TSDynamicModel): 
+
+#     def __init__(self, params: Ihacres7p1sParams, initial_conditions: List, forcing: HydroTS, delta_t: float):
+
+#         self.params = params 
+#         self.initial_conditions = initial_conditions
+#         self.forcing = forcing
+#         self.delta_t = delta_t
+
+#         self.store_names = ["S1"]
+#         self.flux_names = ["Ea", "u", "uq", "us", "xq", "xs", "Qt"] 
+
+#         self.num_stores = len(self.store_names)
+#         self.num_fluxes = len(self.flux_names)
+#         self.num_params = len(self.params)
+#         self.jacob_pattern = [1]
+
+#         # FIXME - probably a better way of doing this
+#         self.flux_groups = {
+#             'Ea': 0, # Index/indices of fluxes to add to AET (adjusted for zero-indexing)
+#             'Q': 6 # Index/indices of fluxes to add to streamflow (adjusted for zero-indexing)
+#         }
+#         self.store_signs = -1 # Signs to give to stores (-1 is a deficit store), only needed for water balance
+#         super().__init__()
+
+#     def init(self): 
+#         tau_q = self.params.values[4]
+#         tau_s = self.params.values[5]
+#         tau_d = self.params.values[6]
         
-        # Attributes set at the beginning of the simulation directly by the user 
-        self.theta 
-        self.delta_t 
-        self.S0 
-        self.input_climate 
-        self.solver_opts 
+#         # Initialise the unit hydrographs and still-to-flow vectors            
+#         uh_q = uh.uh_5_half(tau_q, self.delta_t)
+#         uh_s = uh.uh_5_half(tau_s, self.delta_t)
+#         uh_t = uh.uh_8_delay(tau_d, self.delta_t)
 
-        self.store_min         # store minimum values
-        self.store_max         # store maximum values
-        
-        # Attributes created and updated automatically throughout a simulation
-        self.t                 # current timestep
-        self.fluxes            # vector of all fluxes
-        self.stores            # vector of all stores
-        self.uhs               # unit hydrographs and still-to-flow fluxes
-        self.solver_data       # step-by-step info of solver used and residuals
-        self.status            # 0 = model created, 1 = simulation ended
+#         # Could this be a dataframe?
+#         self.uhs = {'uh_q': uh_q, 'uh_s': uh_s, 'uh_t': uh_t}
 
+#     def model_fun(self, S): 
 
-# classdef MARRMoT_model < handle
-# % Superclass for all MARRMoT models
-    
-# % Copyright (C) 2019, 2021 Wouter J.M. Knoben, Luca Trotter
-# % This file is part of the Modular Assessment of Rainfall-Runoff Models
-# % Toolbox (MARRMoT).
-# % MARRMoT is a free software (GNU GPL v3) and distributed WITHOUT ANY
-# % WARRANTY. See <https://www.gnu.org/licenses/> for details.
+#         lp = self.params.values[0] # Wilting point [mm]
+#         d = self.params.values[1] # Threshold for flow generation [mm]
+#         p = self.params.values[2] # Flow response non-linearity [-]
+#         alpha = self.params.values[3] # Fast/slow flow division [-]
 
-#     properties
-#         % attribute to store whether we are running MATLAB or Octave
-#         isOctave          % 1 if we're on Octave, 0 if MATLAB
-#         % static attributes, set for each models in the model definition
-#         numStores         % number of model stores
-#         numFluxes         % number of model fluxes
-#         numParams         % number of model parameters
-#         parRanges         % default parameter ranges
-#         JacobPattern      % pattern of the Jacobian matrix of model store ODEs
-#         StoreNames        % Names for the stores
-#         FluxNames         % Names for the fluxes
-#         FluxGroups        % Grouping of fluxes (useful for water balance and output)
-#         StoreSigns        % Signs to give to stores (-1 is a deficit store), assumes all 1 if not given
-#         % attributes set at the beginning of the simulation
-#             % directly by the user
-#         theta             % Set of parameters
-#         delta_t           % time step
-#         S0                % initial store values
-#         input_climate     % vector of input climate
-#         solver_opts       % options for numerical solving of ODEs
-#             % automatically, based on parameter set
-#         store_min         % store minimum values
-#         store_max         % store maximum values
-#         % attributes created and updated automatically throughout a
-#         % simulation
-#         t                 % current timestep
-#         fluxes            % vector of all fluxes
-#         stores            % vector of all stores
-#         uhs               % unit hydrographs and still-to-flow fluxes
-#         solver_data       % step-by-step info of solver used and residuals
-#         status            % 0 = model created, 1 = simulation ended
+#         # timestep 
+#         # FIXME select correct time
+#         # t = obj.t;                             % this time step
+#         # climate_in = obj.input_climate(t,:);   % climate at this step
+#         P = self.forcing['P']
+#         Ep = self.forcing['Ep'] 
 
-#     end
-#     methods
-#         % This will run as soon as any model object is created
-#         function [obj] = MARRMoT_model()
-#             obj.isOctave = exist('OCTAVE_VERSION', 'builtin')~=0;
-#             % if running in Octave, load the optim package
-#             if obj.isOctave; pkg load optim; end
-#         end
-#         function [] = set.isOctave(obj, value); obj.isOctave = value; end
-        
-#         % Set methods with checks on inputs for attributes set by the user:
-#         function [] = set.delta_t(obj, value)
-#             if numel(value) == 1 || isempty(value)
-#                 obj.delta_t = value;
-#                 obj.reset();
-#             else
-#                 error('delta_t must be a scalar')
-#             end
-#         end
-#         function [] = set.theta(obj, value)
-#             if numel(value) == obj.numParams || isempty(value)
-#                 obj.theta = value(:);
-#                 obj.reset();
-#             else
-#                 error(['theta must have ' int2str(obj.numParams) ' elements'])
-#             end
-#         end
-#         function [] = set.input_climate(obj, value)
-#             if isstruct(value)
-#                 if isfield(value, 'delta_t')
-#                     obj.delta_t = value.delta_t;
-#                 elseif isempty(obj.delta_t)
-#                     error(['delta_t is not in input climate struct: '...
-#                            'add it with obj.delta_t = delta_t'])
-#                 end
-#                 if isfield(value, {'precip' 'pet' 'temp'})
-#                     P = value.precip/obj.delta_t;
-#                     Ea = value.pet/obj.delta_t;
-#                     T = value.temp/obj.delta_t;
-#                     obj.input_climate = [P(:) Ea(:) T(:)];
-#                     obj.reset();
-#                 else
-#                     error(['Input climate struct must contain fields: '...
-#                            'precip, pet, temp']);
-#                 end
-#             elseif isnumeric(value)
-#                 if size(value,2)  || isempty(value)
-#                     obj.input_climate = value;
-#                     obj.reset();
-#                 else
-#                     error(['Input climate must have 3 columns: '...
-#                            'precip, pet, temp']);
-#                 end
-#             else
-#                 error(['Input climate must either be a struct or '...
-#                        'a numeric array of 3 columns']);
-#             end
-#         end
-#         function [] = set.S0(obj, value)
-#             if numel(value) == obj.numStores || isempty(value)
-#                 obj.S0 = value(:);
-#                 obj.reset();
-#             else
-#                 error(['S0 must have ' int2str(obj.numStores) ' elements'])
-#             end
-#         end
-#         function [] = set.solver_opts(obj, value)
-#             % add options to default ones
-#             obj.solver_opts = obj.add_to_def_opts(value);
-#             obj.reset();
-#         end
-        
-#         % INIT_ runs before each model run to initialise store limits,
-#         % auxiliary parameters etc. it calls INIT which is model specific
-#         function obj = init_(obj)
-#             % min and max of stores
-#             obj.store_min = zeros(obj.numStores,1);
-#             obj.store_max = inf(obj.numStores,1);
-            
-#             % empty vectors of fluxes and stores
-#             t_end = size(obj.input_climate, 1);
-#             obj.stores = zeros(t_end, obj.numStores);
-#             obj.fluxes = zeros(t_end, obj.numFluxes);
-            
-#             % empty struct with the solver data
-#             obj.solver_data.resnorm   = zeros(t_end,1);
-#             obj.solver_data.solver = zeros(t_end,1);
-#             if(~obj.isOctave); obj.solver_data.solver = categorical(obj.solver_data.solver); end;
-#             obj.solver_data.iter   = zeros(t_end,1);
-            
-#             % model specific initialisation
-#             obj.init();
-#         end
-        
-#         % RESET is called any time that a user-specified input is changed
-#         % (t, delta_t, input_climate, S0, solver_options) and resets any
-#         % previous simulation ran on the object.
-#         % This is to prevent human error in analysing results.
-#         function obj = reset(obj)
-#         	obj.t = [];                 % current timestep
-#             obj.fluxes = [];            % vector of all fluxes
-#             obj.stores = [];            % vector of all stores
-#             obj.uhs = [];               % unit hydrographs and still-to-flow fluxes
-#             obj.solver_data = [];       % step-by-step info of solver used and residuals
-#             obj.status = 0;             % 0 = model created, 1 = simulation ended
-#         end
-        
-#         % ODE approximation with Implicit Euler time-stepping scheme
-#         function err = ODE_approx_IE(obj, S)
-#             S = S(:);
-#             delta_S = obj.model_fun(S);
-#             if obj.t == 1; Sold = obj.S0(:);
-#             else; Sold = obj.stores(obj.t-1,:)';
-#             end
-#             err = (S - Sold)/obj.delta_t - delta_S';
-#         end 
-        
-#         % SOLVE_STORES solves the stores ODEs 
-#         function [Snew, resnorm, solver, iter] = solve_stores(obj, Sold)
-            
-#             solver_opts = obj.solver_opts;
-            
-#             % This reduces the tolerance to a fraction of the smallest store,
-#             % if stores are very small, with 1E-6 as minimum
-#             % (if resnorm_tolerance is 0.1 as default)
-#             resnorm_tolerance = solver_opts.resnorm_tolerance * min(min(abs(Sold)) + 1E-5, 1);
-            
-#             % create vectors for each of the three solutions (NewtonRaphon,
-#             % fsolve and lsqnonlin), this way if all three run it takes the
-#             % best at the end and not the last one.
-#             Snew_v    = zeros(3, obj.numStores);
-#             resnorm_v = Inf(3, 1);
-#             iter_v    = ones(3,1);
-            
-#             % first try to solve the ODEs using NewtonRaphson
-#             if(~obj.isOctave) %if MATLAB
-#                 [tmp_Snew, tmp_fval] = ...
-#                             NewtonRaphson(@obj.ODE_approx_IE,...
-#                                           Sold,...
-#                                           solver_opts.NewtonRaphson);
-#             else              % if Octave
-#                 [tmp_Snew, tmp_fval] = ...
-#                             NewtonRaphson_octave(@obj.ODE_approx_IE,...
-#                                                  Sold,...
-#                                                  solver_opts.NewtonRaphson);
-#             end
-#             tmp_resnorm = sum(tmp_fval.^2);
-            
-#             Snew_v(1,:)  = tmp_Snew;
-#             resnorm_v(1) = tmp_resnorm;
-            
-#             % if NewtonRaphson doesn't find a good enough solution, run FSOLVE
-#             if tmp_resnorm > resnorm_tolerance  
-#                 [tmp_Snew,tmp_fval,~,tmp_iter] = ...
-#                             obj.rerunSolver('fsolve', ...              
-#                                             tmp_Snew, ...                  % recent estimates
-#                                             Sold);                         % storages at previous time step
-                
-#                 tmp_resnorm = sum(tmp_fval.^2);
-                
-#                 Snew_v(2,:)  = tmp_Snew;
-#                 resnorm_v(2) = tmp_resnorm;
-#                 iter_v(2)    = tmp_iter;
+#         flux_ea = fluxes.evap_12(S, lp, Ep)
+#         flux_u = fluxes.saturation_5(S, d, p, P)
+#         flux_uq = fluxes.split_1(alpha, flux_u)
+#         flux_us = fluxes.split_1(1 - alpha, flux_u)
+#         flux_xq = uh.route(flux_uq, self.uhs['uh_q'])
+#         flux_xs = uh.route(flux_us, self.uhs['uh_s'])
+#         flux_xt = uh.route(flux_xq + flux_xs, self.uhs['uh_t'])
 
-#                 % if FSOLVE doesn't find a good enough solution, run LSQNONLIN
-#                 if tmp_resnorm > resnorm_tolerance
-#                     [tmp_Snew,tmp_fval,~,tmp_iter] = ...
-#                             obj.rerunSolver('lsqnonlin', ...              
-#                                             tmp_Snew, ...                  % recent estimates
-#                                             Sold);                         % storages at previous time step
-                    
-#                     tmp_resnorm = sum(tmp_fval.^2);
+#         # Stores ODEs 
+#         dS = -P + flux_ea + flux_u
+#         fluxes = [flux_ea, flux_u, flux_uq, flux_us, flux_xq, flux_xs, flux_xt] 
 
-#                     Snew_v(3,:)  = tmp_Snew;
-#                     resnorm_v(3) = tmp_resnorm;
-#                     iter_v(3)    = tmp_iter;
-                    
-#                 end
-#             end
-            
-#             % get the best solution
-#             [resnorm, solver_id] = min(resnorm_v);
-#             Snew = Snew_v(solver_id,:);
-#             iter = iter_v(solver_id);
-#             if(obj.isOctave)
-#                 solver = solver_id;
-#             else
-#                 solvers = ["NewtonRaphson", "fsolve", "lsqnonlin"];
-#                 solver = solvers(solver_id);
-#             end
-            
-#         end
-        
-#         % RERUNSOLVER Restarts a root-finding solver with different 
-#         % starting points
-        
-#         function [ Snew, fval, stopflag, stopiter ] = ...
-#                                  rerunSolver( obj,...
-#                                               solverName,...
-#                                               initGuess,...
-#                                               Sold)
-#         % get out useful attributes
-#         solver_opts = obj.solver_opts.(solverName);
-#         solve_fun = @obj.ODE_approx_IE;
-#         max_iter = obj.solver_opts.resnorm_maxiter;
-#         resnorm_tolerance = obj.solver_opts.resnorm_tolerance * min(min(abs(Sold)) + 1E-5, 1);
-        
-#         % Initialize iteration counter, sampling checker and find number of ODEs
-#         iter      = 1;
-#         resnorm   = resnorm_tolerance + 1;                                 % i.e. greater than the required accuracy
-#         numStores = obj.numStores;
-#         stopflag  = 1;                                                     % normal function run
+#         return dS, fluxes
 
-#         % Initialise vector of Snew and fval for each iteration, this way you can
-#         % keep the best one, not the last one.
-#         Snew_v    = zeros(numStores, max_iter);
-#         fval_v    = inf(numStores,max_iter);
-#         resnorm_v = inf(1, max_iter);
-#         Snew = -1 * ones(numStores, 1);
+#     def step(self): 
+#         # Update still-to-flow vectors using fluxes at current step and
+#         # unit hydrographs
+#         self.uhs['uh_q'] = uh.update_uh(self.uhs['uh_q'], self.fluxes['flux_uq'])
+#         self.uhs['uh_s'] = uh.update_uh(self.uhs['uh_s'], self.fluxes['flux_us'])
+#         self.uhs['uh_t'] = uh.update_uh(self.uhs['uh_t'], self.fluxes['flux_xq'] + self.fluxes['flux_xs'])
 
-#         % Start the re-sampling
-#         % Re-sampling uses different starting points for the solver to see if
-#         % solution accuracy improves. Starting points are alternated as follows:
-#         % 1. location where the solver got stuck
-#         % 2. storages at previous time step
-#         % 3. minimum values
-#         % 4. maximum values
-#         % 5. randomized values close to solution of previous time steps
-
-#         while resnorm > resnorm_tolerance
-
-#             % Select the starting points
-#             switch iter
-#                 case 1
-#                     x0 = initGuess(:);                                     % 1. Location where solver got stuck
-#                 case 2
-#                     x0 = Sold(:);                                          % 2. Stores at t-1
-#                 case 3
-#                     x0 = max(-2*10^4.*ones(numStores,1),obj.store_min(:)); % 3. Low values (store minima or -2E4)
-#                 case 4
-#                     x0 = min(2*10^4.*ones(numStores,1),obj.store_max(:));  % 4. High values (store maxima or 2E4)
-#                 otherwise
-#                     x0 = max(zeros(numStores,1),...
-#                              Sold(:)+randn(numStores,1).*Sold(:)/10);      % 5. Randomized values close to starting location
-#             end
-
-#             % Re-run the solver
-#             if strcmpi(solverName, 'fsolve')
-#                 [Snew_v(:,iter), fval_v(:,iter), stopflag] = ...
-#                     fsolve(solve_fun, x0, solver_opts);
-#             elseif strcmpi(solverName, 'lsqnonlin')
-#                 [Snew_v(:,iter), ~,  fval_v(:,iter), stopflag] = ...
-#                     lsqnonlin(solve_fun, x0, obj.store_min, [], solver_opts);
-#             else
-#                 error('Only fsolve and lsqnonlin are supported');
-#             end
-
-#             resnorm_v(iter) = sum(fval_v(:,iter).^2);
-#             [resnorm,stopiter] = min(resnorm_v);
-#             fval = fval_v(:,stopiter);
-#             Snew = Snew_v(:,stopiter);
-
-#             % Break out of the loop of iterations exceed the specified maximum
-#             if iter >= max_iter
-#                 stopflag = 0;                                                          % function stopped due to iteration count
-#                 break
-#             end
-            
-#             % Increase the iteration counter
-#             iter = iter + 1;
-#         end
-
-#         end
-        
-#         % RUN runs the model with a given climate input, initial stores,
-#         % parameter set and solver settings.
-#         % none of the arguments are needed, they can be set beforehand with
-#         % obj.theta = theta; obj.input_climate = input_climate; etc.
-#         % then simply obj.run() without arguments.
-#         function [] = run(obj,...
-#                           input_climate,...         
-#                           S0,...
-#                           theta,...
-#                           solver_opts)
-
-#             if nargin > 4 && ~isempty(solver_opts)
-#                 obj.solver_opts = solver_opts;
-#             end
-#             if nargin > 3 && ~isempty(theta)
-#                 obj.theta = theta;
-#             end
-#             if nargin > 2 && ~isempty(S0)
-#                 obj.S0 = S0;
-#             end
-#             if nargin > 1 && ~isempty(input_climate)
-#                 obj.input_climate = input_climate;
-#             end
-            
-            
-#             % run INIT_ method, this will calculate all auxiliary parameters
-#             % and set up routing vectors and store limits
-#             obj.init_();
-
-#             t_end = size(obj.input_climate, 1);
-            
-#             for t = 1:t_end
-#                obj.t = t;
-#                if t == 1; Sold = obj.S0(:);
-#                else; Sold = obj.stores(t-1,:)';
-#                end
-
-#                [Snew,resnorm,solver,iter] = obj.solve_stores(Sold);
-               
-#                [dS, f] = obj.model_fun(Snew);
-    
-#                obj.fluxes(t,:) = f * obj.delta_t;
-#                obj.stores(t,:) = Sold + dS' * obj.delta_t;
-               
-#                obj.solver_data.resnorm(t) = resnorm;
-#                obj.solver_data.solver(t) = solver;
-#                obj.solver_data.iter(t) = iter;
-               
-#                obj.step();
-#             end
-            
-#             obj.status = 1;
-#         end
-        
-#         % GET_OUTPUT runs the model exactly like RUN, but output is
-#         % consistent with current MARRMoT
-#         function [fluxOutput,...
-#                   fluxInternal,...
-#                   storeInternal,...
-#                   waterBalance,...
-#                   solverSteps] = get_output(obj,...
-#                                             varargin)
-            
-#             if nargin > 1 || isempty(obj.status) || obj.status == 0 
-#                 obj.run(varargin{:});
-#             end
-            
-#             % --- Fluxes leaving the model ---          
-#             fg = fieldnames(obj.FluxGroups);
-#             fluxOutput = struct();
-#             for k=1:numel(fg)
-#                 idx = abs(obj.FluxGroups.(fg{k}));
-#                 signs = sign(obj.FluxGroups.(fg{k}));
-#                 fluxOutput.(fg{k}) = sum(signs.*obj.fluxes(:,idx),2);
-#             end
-            
-#             % --- Fluxes internal to the model ---
-#             fluxInternal = struct;
-#             for i = 1:obj.numFluxes
-#                 fluxInternal.(obj.FluxNames{i}) = obj.fluxes(:,i)';
-#             end
-            
-#             % --- Stores ---
-#             storeInternal = struct;
-#             for i = 1:obj.numStores
-#                 storeInternal.(obj.StoreNames{i}) = obj.stores(:,i)';
-#             end
-            
-#             % --- Water balance, if requested ---
-#             if nargout >= 4
-#                 waterBalance = obj.check_waterbalance();
-#             end
-            
-#             % --- step-by-step data of the solver, if requested ---
-#             if nargout == 5
-#                 solverSteps = obj.solver_data;
-#             end
-#         end
-        
-#         % CHECK_WATERBALANCE returns the waterbalance
-#         % like in MARRMoT1, it will print to screen
-#         function [out] = check_waterbalance(obj, varargin)
-            
-#             if nargin > 1 || isempty(obj.status) || obj.status == 0 
-#                 obj.run(varargin{:});
-#             end
-#             % Get variables
-#             P  = obj.input_climate(:,1);
-#             fg = fieldnames(obj.FluxGroups);
-#             OutFluxes = zeros(1,numel(fg));
-#             for k=1:numel(fg)                                              % cumulative of each flow leaving the model
-#                 idx = abs(obj.FluxGroups.(fg{k}));
-#                 signs = sign(obj.FluxGroups.(fg{k}));
-#                 OutFluxes(k) = sum(sum(signs.*obj.fluxes(:,idx), 1),2);
-#             end
-#             if isempty(obj.StoreSigns); obj.StoreSigns = repelem(1, obj.numStores); end
-#             dS = obj.StoreSigns(:) .* (obj.stores(end,:)' - obj.S0);          % difference of final and initial storage for each store
-#             if isempty(obj.uhs); obj.uhs = {}; end
-#             R = cellfun(@(uh) sum(uh(2,:)), obj.uhs);                      % cumulative of each flows still to be routed
-            
-#             % calculate water balance
-#             out = sum(P) - ...                                             % input from precipitation
-#                 sum(OutFluxes) - ...                                       % all fluxes leaving the model (some may be entering, but they should have a negative sign)
-#                 sum(dS) - ...                                              % all differences in storage
-#                 sum(R);                                                    % all flows still being routed
-            
-#             disp(['Total P  = ',num2str(sum(P)),' mm.'])
-#             for k = 1:numel(fg)
-#                 disp(['Total ',char(fg(k)),' = ',...
-#                       num2str(-OutFluxes(k)),' mm.'])
-#             end
-#             for s = 1:obj.numStores
-#                 if obj.StoreSigns(s) == -1
-#                     ending=' (deficit store).';
-#                 else
-#                     ending='.';
-#                 end
-#                 disp(['Delta S',num2str(s),' = ',...
-#                       num2str(-dS(s)),' mm',ending])
-#             end
-#             if ~isempty(R)
-#                 disp(['On route = ',num2str(-sum(R)),' mm.'])
-#             end
-
-#         disp('-------------')
-#         disp(['Water balance = ', num2str(out), ' mm.'])
-#         end
-        
-#         % GET_STREAMFLOW only returns the streamflow, runs the model if it
-#         % hadn't run already.
-#         function Q = get_streamflow(obj, varargin)
-            
-#             if nargin > 1 || isempty(obj.status) || obj.status == 0
-#                 obj.run(varargin{:});
-#             end
-        
-#             Q = sum(obj.fluxes(:,obj.FluxGroups.Q),2);
-#         end
-        
-#         % CALIBRATE uses the chosen algorithm to find the optimal parameter
-#         % set, given model inputs, objective function and observed streamflow.
-#         % the function chosen in algorithm should have the same inputs and
-#         % outputs as MATLAB's fminsearch.
-#         function  [par_opt,...                                             % optimal parameter set
-#                    of_cal,...                                              % value of objective function at par_opt
-#                    stopflag,...                                            % flag indicating reason the algorithm stopped
-#                    output] = ...                                           % output, see fminsearch for detail
-#                              calibrate(obj,...
-#                                        Q_obs,...                           % observed streamflow
-#                                        cal_idx,...                         % timesteps to use for model calibration
-#                                        optim_fun,...                       % function to use for optimisation (must have same structure as fminsearch)
-#                                        par_ini,...                         % initial parameter estimates
-#                                        optim_opts,...                      % options to optim_fun
-#                                        of_name,...                         % name of objective function to use
-#                                        inverse_flag,...                    % should the OF be inversed?
-#                                        display,...                         % should I display information about the calibration?
-#                                        varargin)                           % additional arguments to the objective function
-             
-#              if isempty(obj.input_climate) || isempty(obj.delta_t) ||...
-#                      isempty(obj.S0) || isempty(obj.solver_opts)
-#                  error(['input_climate, delta_t, S0 and solver_opts '...
-#                         'attributes must be specified before calling '...
-#                         'calibrate.']);
-#              end
-             
-#              % if the list of timesteps to use for calibration is empty,
-#              % use all steps 
-#              if isempty(cal_idx)
-#                  cal_idx = 1:length(Q_obs);
-#              end
-             
-#              % use display by default
-#              if isempty(display)
-#                  display = true;
-#              end
-
-#              % use the data from the start to the last value of cal_idx to
-#              % run the simulation
-#              if islogical(cal_idx); cal_idx = find(cal_idx); end
-#              input_climate_all = obj.input_climate;
-#              obj.input_climate = input_climate_all(1:max(cal_idx),:);
-#              Q_obs = Q_obs(1:max(cal_idx));
-
-#              % if the initial parameter set isn't set,  start from mean
-#              % values of parameter range
-#              if isempty(par_ini)
-#                  par_ini = mean(obj.parRanges,2);
-#              end
-             
-#              % helper function to calculate fitness given a set of
-#              % parameters
-#              function fitness = fitness_fun(par)
-#                  Q_sim = obj.get_streamflow([],[],par);
-#                  fitness = (-1)^inverse_flag*feval(of_name, Q_obs, Q_sim, cal_idx, varargin{:});
-#              end
-             
-#              % display some useful things for the user to make sure they
-#              % used the right settings
-#              if display
-#                  disp('---')
-#                  disp(['Starting calibration of model ' class(obj) '.'])
-#                  disp(['Simulation will run for timesteps 1-' num2str(max(cal_idx)) '.'])
-                 
-#                    % this is a bit ugly, but it formats the list of cal_idx in
-#                    % a pretty and concise way
-#                  cal_idx = sort(cal_idx);
-#                  i = 1;
-#                  previous = cal_idx(i);
-#                  cal_idx_str = num2str(previous);
-#                  while i < numel(cal_idx)
-#                      i = i + 1;
-#                      if cal_idx(i)-previous == 1
-#                          i = find(diff(cal_idx(i:end)) ~= 1, 1) + i - 1;
-#                          if isempty(i); i = numel(cal_idx); end
-#                          previous = cal_idx(i);
-#                          cal_idx_str = strcat(cal_idx_str, '-', num2str(previous));
-#                      else
-#                          previous = cal_idx(i);
-#                          cal_idx_str = strcat(cal_idx_str, ', ', num2str(previous));
-#                      end
-					 
-#                  end
-    
-#                  disp(['Objective function ' of_name ' will be calculated in time steps ' cal_idx_str '.'])
-#                  disp(['The optimiser ' optim_fun ' will be used to optimise the objective function.'])
-#                  disp(['Options passed to the optimiser:'])
-#                  disp(optim_opts)
-#                  disp('All other options are left to their default,')
-#                  disp('check the source code of the optimiser to find these default values.')
-#                  disp('---')
-#              end
-
-#              [par_opt,...                                                  % optimal parameter set at the end of the optimisation
-#                  of_cal,...                                                % value of the objective function at par_opt
-#                  stopflag,...                                              % flag indicating reason the algorithm stopped
-#                  output] = ...                                             % output, see fminsearch for detail
-#                            feval(optim_fun,...                             % run the optimisation algorithm chosen
-#                                  @fitness_fun,...                          % function to optimise is the fitness function
-#                                  par_ini,...                               % initial parameter set
-#                                  optim_opts);                              % optimiser options
-             
-#              % if of_cal was inverted, invert it back before returning
-#              of_cal = (-1)^inverse_flag * of_cal;
-             
-#              % reset the whole input climate as it was before the
-#              % calibration
-#              obj.input_climate = input_climate_all;
-#         end
-         
-#          % function to return default solver options
-#          function solver_opts = default_solver_opts(obj)
-#             solver_opts.resnorm_tolerance = 0.1;                                       % Root-finding convergence tolerance
-#             solver_opts.resnorm_maxiter   = 6;                                         % Maximum number of re-runs used in rerunSolver
-#             solver_opts.NewtonRaphson = optimset('MaxIter', obj.numStores * 10);
-#             % if MATLAB
-#             if(~obj.isOctave)
-#               solver_opts.fsolve = optimoptions('fsolve',...
-#                                                 'Display','none',...                     % Disable display settings
-#                                                 'JacobPattern', obj.JacobPattern);
-#               solver_opts.lsqnonlin = optimoptions('lsqnonlin',...                       % lsqnonlin settings for cases where fsolve fails
-#                                                   'Display','none',...
-#                                                   'JacobPattern',obj.JacobPattern,...
-#                                                   'MaxFunEvals',1000);
-#             else % if OCTAVE
-#               solver_opts.fsolve = optimset('Display', 'off');
-#               solver_opts.lsqnonlin = optimset('Display', 'off', 'MaxFunEvals',1000);
-#             end
-                                              
-#          end
-         
-#          % function to add new solver opts to the default ones
-#          function solver_opts = add_to_def_opts(obj, opts)
-#              def_opts = obj.default_solver_opts();             
-#              if nargin == 1 || isempty(opts)
-#                  solver_opts = def_opts;
-#              else
-#                  def_fields = fieldnames(def_opts);
-#                  % for each field in the default options (5 at the moment)
-#                  for k = 1:length(def_fields)
-#                      field = def_fields{k};
-#                      % if the field is not provided, use the default one
-#                      if ~isfield(opts, field) || isempty(opts.(field))
-#                          solver_opts.(field) = def_opts.(field);
-#                      % if the field is provided, and the dafault is a struct,
-#                      % add the new values to the default struct
-#                      elseif isstruct(def_opts.(field))
-#                          solver_opts.(field) = optimset(def_opts.(field),opts.(field));
-#                      % if the field is provided, and the dafault is not a struct,
-#                      % discard the default and use the new value
-#                      else
-#                          solver_opts.(field) = opts.(field);
-#                      end
-#                  end
-#              end             
-#          end
-#     end
-# end
-        
