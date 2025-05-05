@@ -5,7 +5,7 @@
 import pytest
 
 
-from hydrots import hydrots
+from hydrots import timeseries
 
 
 @pytest.fixture

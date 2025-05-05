@@ -19,7 +19,8 @@ classifiers = [
 license = {text = "MIT license"}
 dependencies = [
   "typer",
-  "bmipy"
+  "bmipy",
+  "numba",
   "numpy",
   "pandas",
   "scipy"

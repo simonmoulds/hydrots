@@ -1,6 +1,8 @@
 
 import numpy as np
+from numba import njit
 
+@njit
 def baseflow_1(p1: float, S: float) -> float:
     """
     Outflow from a linear reservoir.
@@ -14,6 +16,7 @@ def baseflow_1(p1: float, S: float) -> float:
     """
     return p1 * S
 
+@njit
 def evap_7(S: float, Smax: float, Ep: float, dt: float) -> float:
     """
     Evaporation based on scaled current water storage, limited by potential rate.
@@ -27,9 +30,9 @@ def evap_7(S: float, Smax: float, Ep: float, dt: float) -> float:
     Returns:
         float: evaporation flux [mm/d]
     """
-    return min((S / Smax) * Ep, S / dt)
+    return np.min((S / Smax) * Ep, S / dt)
 
-
+@njit
 def evap_12(S: float, p1: float, Ep: float) -> float:
     """
     Evaporation from deficit store, with exponential decline as
@@ -43,9 +46,9 @@ def evap_12(S: float, p1: float, Ep: float) -> float:
     Returns:
     - float: actual evaporation [mm/d]
     """
-    return min(1, np.exp(2 * (1 - S / p1))) * Ep
+    return np.min(1, np.exp(2 * (1 - S / p1))) * Ep
 
-
+@njit
 def saturation_2(S: float, Smax: float, p1: float, In: float) -> float:
     """
     Saturation excess from a store with varying degrees of saturation.
@@ -59,10 +62,10 @@ def saturation_2(S: float, Smax: float, p1: float, In: float) -> float:
     Returns:
         float: outgoing flux [mm/d]
     """
-    saturation_deficit = max(0.0, min(1.0, 1 - S / Smax))
+    saturation_deficit = np.max(0.0, np.min(1.0, 1 - S / Smax))
     return (1 - saturation_deficit ** p1) * In
 
-
+@njit
 def saturation_5(S: float, p1: float, p2: float, In: float) -> float:
     """
     Exponential saturation excess based on current storage and a threshold.
@@ -76,10 +79,11 @@ def saturation_5(S: float, p1: float, p2: float, In: float) -> float:
     Returns:
     - float: outgoing flux [mm/d]
     """
-    S = max(S, 0)  # ensure S >= 0
-    saturation_ratio = min(1, (S / p1) ** p2)
+    S = np.max(S, 0)  # ensure S >= 0
+    saturation_ratio = np.min(1, (S / p1) ** p2)
     return (1 - saturation_ratio) * In
 
+@njit
 def split_1(p1: float, In: float) -> float:
     """
     Split flow by a given fraction.

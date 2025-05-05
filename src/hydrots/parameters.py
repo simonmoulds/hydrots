@@ -15,13 +15,13 @@ class DynamicModelParameters:
 
     def _check_parameter_values(self, values): 
         # Check length
-        if len(initial_values) != len(self.param_names):
-            raise ValueError(f"This model requires {len(self.param_names)} parameters but {len(initial_values)} were supplied.")
+        if len(values) != len(self.param_names):
+            raise ValueError(f"This model requires {len(self.param_names)} parameters but {len(values)} were supplied.")
 
         # Check bounds
-        initial_values = [
+        values = [
             max(l, min(p, u))
-            for p, l, u in zip(initial_values, self.param_lower, self.param_upper)
+            for p, l, u in zip(values, self.param_lower, self.param_upper)
         ]
         return values
 
@@ -35,16 +35,19 @@ class DynamicModelParameters:
 
     def update(self, values): 
         values = self._check_parameter_values(values)
-        self.params['values'] = values
+        self.params['value'] = values
 
-    def get_initial(self):
-        return self.params["initial"].values
+    def update_lower_bound(self, values): 
+        self.params["lower_bound"] = values 
+
+    def update_upper_bound(self, values): 
+        self.params["upper_bound"] = values 
+
+    def get_initial_value(self):
+        return self.params["initial_value"].values
 
     def get_bounds(self):
-        return list(zip(self.params["lower"], self.params["upper"]))
-
-    def update(self, new_values):
-        self.params["value"] = new_values
+        return list(zip(self.params["lower_bound"], self.params["upper_bound"]))
 
     def __len__(self): 
         return len(self.params)
@@ -65,7 +68,7 @@ class Ihacres7p1sParams(DynamicModelParameters):
         self.param_lower = [1, 1, 0, 0, 1, 1, 0]
         self.param_upper = [2000, 2000, 10, 1, 700, 700, 119]
         initial_values = self.set_initial_values(initial_values)
-        params = pd.DataFrame.from_dict({'parameter_name': self.param_names, 'lower': self.param_lower, 'upper': self.param_upper, 'initial_value': initial_values, 'value': initial_values})
+        params = pd.DataFrame.from_dict({'parameter_name': self.param_names, 'lower_bound': self.param_lower, 'upper_bound': self.param_upper, 'initial_value': initial_values, 'value': initial_values})
         super().__init__(params)
 
 
@@ -76,6 +79,6 @@ class Hymod5p5sParams(DynamicModelParameters):
         self.param_lower = [1, 0, 0, 0, 0]
         self.param_upper = [2000, 10, 1, 1, 1]
         initial_values = self.set_initial_values(initial_values)
-        params = pd.DataFrame.from_dict({'parameter_name': self.param_names, 'lower': self.param_lower, 'upper': self.param_upper, 'initial_value': initial_values, 'value': initial_values})
+        params = pd.DataFrame.from_dict({'parameter_name': self.param_names, 'lower_bound': self.param_lower, 'upper_bound': self.param_upper, 'initial_value': initial_values, 'value': initial_values})
         super().__init__(params)
 
