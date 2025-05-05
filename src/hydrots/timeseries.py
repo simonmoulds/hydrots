@@ -7,8 +7,8 @@ import warnings
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, List
 
-from .validator import TSValidator
-# from .summary import TSSummary
+from hydrots.validator import TSValidator
+from hydrots.summary import TSSummary
 
 class HydroTS: 
 
@@ -209,9 +209,13 @@ class HydroTS:
     def n_years(self):
         return len(self.valid_years)
 
-    # @property 
-    # def summary(self):
-    #     return TSSummary(self)
+    @property 
+    def summary(self):
+        return TSSummary(self)
+
+    @property 
+    def valid_data(self): 
+        return self.data[self.data['water_year'].isin(self.valid_years)]
 
     def __len__(self): 
         return self.data.shape[0]

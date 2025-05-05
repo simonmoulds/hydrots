@@ -6,15 +6,17 @@ import itertools
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, List
 
-from .hydrots import HydroTS
+# from hydrots.timeseries import HydroTS
 
 
 # FIXME this currently makes assumption that timeseries has daily resolution
 class TSSummary:
+
     _custom_summary_functions = {}
 
-    def __init__(self, ts: HydroTS, use_complete_years=True): 
-        self.ts = ts 
+    def __init__(self, ts: "HydroTS", use_complete_years=True): 
+        self.ts = ts
+        self.use_complete_years = use_complete_years 
 
     def annual_maximum_flow(self) -> pd.DataFrame:
         return self.ts.data.groupby('water_year')[['Q']].max() 
@@ -335,26 +337,26 @@ class TSSummary:
 #         out = pd.concat(df_list, axis=0).reset_index(drop=True)
 #         return out
 
-class NoFlowEventDuration(LowFlowMetric):
-    def compute(self): 
-        df = df.copy()
-        # Function to calculate the no-flow duration recurrence period
-        df['noflow'] = np.where(df['Q'] <= 0.001, 1, 0)
-        # rle_no_flow = df['noflow'].values
-        rle_no_flow = [(k, len(list(v))) for k, v in itertools.groupby(df['noflow'])]
-        event_ids = [[i] * grp[1] for i, grp in enumerate(rle_no_flow)]
-        event_ids = list(itertools.chain.from_iterable(event_ids))
-        df['event_id'] = event_ids
-        no_flow_events = df[df['noflow'] == 1].groupby('event_id').agg(
-            start_time=('time', 'min'),
-            end_time=('time', 'max'),
-            duration=('time', lambda x: (x.max() - x.min()).days + 1)
-        )
-        # no_flow_events['end_year'] = no_flow_events['end_time'].dt.year
-        # max_durations = no_flow_events.groupby('end_year')['duration'].max()
-        # D80 = max_durations.quantile(quantile)
-        # return D80
-        return no_flow_events
+# class NoFlowEventDuration(LowFlowMetric):
+#     def compute(self): 
+#         df = df.copy()
+#         # Function to calculate the no-flow duration recurrence period
+#         df['noflow'] = np.where(df['Q'] <= 0.001, 1, 0)
+#         # rle_no_flow = df['noflow'].values
+#         rle_no_flow = [(k, len(list(v))) for k, v in itertools.groupby(df['noflow'])]
+#         event_ids = [[i] * grp[1] for i, grp in enumerate(rle_no_flow)]
+#         event_ids = list(itertools.chain.from_iterable(event_ids))
+#         df['event_id'] = event_ids
+#         no_flow_events = df[df['noflow'] == 1].groupby('event_id').agg(
+#             start_time=('time', 'min'),
+#             end_time=('time', 'max'),
+#             duration=('time', lambda x: (x.max() - x.min()).days + 1)
+#         )
+#         # no_flow_events['end_year'] = no_flow_events['end_time'].dt.year
+#         # max_durations = no_flow_events.groupby('end_year')['duration'].max()
+#         # D80 = max_durations.quantile(quantile)
+#         # return D80
+#         return no_flow_events
 
 # class NoFlowFrequency(LowFlowMetric):
 #     def compute(self): 
