@@ -9,22 +9,29 @@ class TSValidator:
                  data: pd.DataFrame, 
                  data_columns: List[str],
                  freq: str,
+                 start_year: Optional[int] = None,
+                 end_year: Optional[int] = None,
                  min_tot_years: Optional[int] = None,
                  min_consecutive_years: Optional[int] = None,
                  min_availability: Optional[float] = None):
+
         self.data = data  # Expect data to be formatted with datetime index and single/multi column
         self.data_columns = data_columns
         self.freq = freq
         self.criteria: Dict[str, Optional[float | int]] = {}
-        self._set_validity_criteria(min_tot_years, min_consecutive_years, min_availability)
+        self._set_validity_criteria(start_year, end_year, min_tot_years, min_consecutive_years, min_availability)
         self._compute_annual_availability()
 
     def _set_validity_criteria(self,
+                               start_year: Optional[int],
+                               end_year: Optional[int],
                                min_tot_years: Optional[int],
                                min_consecutive_years: Optional[int],
                                min_availability: Optional[float]):
 
         new_values = {
+            'start_year': start_year,
+            'end_year': end_year,
             'min_tot_years': min_tot_years,
             'min_consecutive_years': min_consecutive_years,
             'min_availability': min_availability
@@ -42,6 +49,8 @@ class TSValidator:
 
     def update_criteria(self, **kwargs):
         self._set_validity_criteria(
+            kwargs.get('start_year', self.criteria.get('start_year')),
+            kwargs.get('end_year', self.criteria.get('end_year')),
             kwargs.get('min_tot_years', self.criteria.get('min_tot_years')),
             kwargs.get('min_consecutive_years', self.criteria.get('min_consecutive_years')),
             kwargs.get('min_availability', self.criteria.get('min_availability'))
@@ -50,11 +59,22 @@ class TSValidator:
 
     @property 
     def valid_years(self): 
-        if 'min_availability' in self.criteria: 
-            valid = self.availability >= self.criteria['min_availability']
-            return valid[valid].index 
-        else: 
-            return None 
+        min_avail = self.criteria.get('min_availability')
+        if min_avail is None:
+            return None
+
+        # Slice by start/end year if provided
+        avail = self.availability  # pandas Series indexed by year
+        start = self.criteria.get('start_year')
+        if start is not None:
+            avail = avail[avail.index >= start]
+
+        end = self.criteria.get('end_year')
+        if end is not None:
+            avail = avail[avail.index <= end]
+
+        valid_mask = avail >= min_avail
+        return avail.index[valid_mask]
 
     def _compute_annual_availability(self) -> pd.Series:
         """Compute fraction of non-NaN values per year."""
@@ -67,15 +87,14 @@ class TSValidator:
 
     def _get_n_tot_years(self) -> Optional[int]:
         if 'min_availability' in self.criteria:
-            return (self.availability >= self.criteria['min_availability']).sum()
+            return len(self.valid_years) #(self.availability >= self.criteria['min_availability']).sum()
         return None
 
     def _get_n_consecutive_years(self) -> Optional[int]:
         if 'min_availability' in self.criteria:
-            valid_years = self.availability[self.availability >= self.criteria['min_availability']]
-            if valid_years.empty:
+            if self.valid_years.empty:
                 return 0
-            sorted_years = valid_years.index.sort_values()
+            sorted_years = self.valid_years.index.sort_values()
             diffs = sorted_years.to_series().diff().fillna(1)
             group = (diffs != 1).cumsum()
             return group.value_counts().max()

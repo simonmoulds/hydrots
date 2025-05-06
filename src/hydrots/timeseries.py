@@ -26,10 +26,11 @@ class HydroTS:
                  metadata: pd.DataFrame,
                  freq: str, 
                  use_water_year: bool = True,
-                 use_local_water_year: bool = True):
+                 use_local_water_year: bool = True, 
+                 wettest: bool = True):
 
         self.freq = freq 
-        self.data = self._format_data(data, use_local_water_year, use_water_year) 
+        self.data = self._format_data(data, use_local_water_year, use_water_year, wettest=wettest)
         self.metadata = self._format_metadata(metadata)
 
         # TODO change type of validator depending on application
@@ -53,7 +54,15 @@ class HydroTS:
         """Check if dataframe has the minimum number of years at the specified availability."""
         return self.validator.is_valid()
 
-    def _format_data(self, data: pd.DataFrame, use_water_year: bool, use_local_water_year: bool):
+    def update_water_year(self, use_water_year: bool = True, use_local_water_year: bool = True, wettest: bool = True): 
+        if use_water_year:
+            self.water_year_start = self._get_water_year_start(self.data, use_local_water_year, wettest=wettest)
+        else:
+            self.water_year_start = (1, 1) # Jan 1 
+
+        self.data = self._assign_water_year(self.data)
+
+    def _format_data(self, data: pd.DataFrame, use_water_year: bool, use_local_water_year: bool, wettest: bool):
         data = self._standardize_columns(data)
         data = self._validate_columns(data)
         
@@ -64,7 +73,7 @@ class HydroTS:
         data.index.name = 'time'
 
         if use_water_year:
-            self.water_year_start = self._get_water_year_start(data, use_local_water_year)
+            self.water_year_start = self._get_water_year_start(data, use_local_water_year, wettest=wettest)
         else:
             self.water_year_start = (1, 1) # Jan 1 
 

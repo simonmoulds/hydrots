@@ -6,8 +6,6 @@ import itertools
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, List
 
-# from hydrots.timeseries import HydroTS
-
 
 # FIXME this currently makes assumption that timeseries has daily resolution
 class TSSummary:
@@ -19,7 +17,10 @@ class TSSummary:
         self.use_complete_years = use_complete_years 
 
     def annual_maximum_flow(self) -> pd.DataFrame:
-        return self.ts.data.groupby('water_year')[['Q']].max() 
+        amax = self.ts.data.groupby('water_year')[['Q']].max() 
+        amax = amax.rename(columns={'Q': 'Q_annual_max'})
+        amax = amax.reset_index(drop=False)
+        return amax 
 
     def n_day_flow_extreme(self, n: int = 7, fun: str = 'min') -> pd.DataFrame:
         df = self.ts.data.copy()
@@ -135,9 +136,9 @@ class TSSummary:
         df = df.reset_index()
         no_flow_events = df[df['noflow'] == 1].groupby('event_id').agg(
             water_year=('water_year', 'min'), # Take the water year of the event start
-            start_time=('time', 'min'),
-            end_time=('time', 'max'),
-            duration=('time', lambda x: (x.max() - x.min()).days + 1)
+            noflow_event_start_time=('time', 'min'),
+            noflow_event_end_time=('time', 'max'),
+            noflow_event_duration=('time', lambda x: (x.max() - x.min()).days + 1)
         )
         return no_flow_events
 
@@ -164,7 +165,7 @@ class TSSummary:
         )
         yearly_events = no_flow_events.groupby('water_year', as_index=False).size().set_index('water_year')
         yearly_events = yearly_events.reindex(self.ts.valid_years).fillna(0)
-        yearly_events = yearly_events.rename(columns={'size': 'n'})[['n']].astype(int)
+        yearly_events = yearly_events.rename(columns={'size': 'n_noflow_events'})[['n_noflow_events']].astype(int)
         return yearly_events
 
     @staticmethod
