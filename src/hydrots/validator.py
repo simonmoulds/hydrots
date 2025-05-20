@@ -53,7 +53,8 @@ class TSValidator:
             kwargs.get('end_year', self.criteria.get('end_year')),
             kwargs.get('min_tot_years', self.criteria.get('min_tot_years')),
             kwargs.get('min_consecutive_years', self.criteria.get('min_consecutive_years')),
-            kwargs.get('min_availability', self.criteria.get('min_availability'))
+            kwargs.get('min_availability', self.criteria.get('min_availability')),
+            # kwargs.get('min_monthly_availability', self.criteria.get('min_monthly_availability'))
         )
         return self
 

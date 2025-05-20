@@ -9,6 +9,7 @@ from typing import Optional, Dict, List
 
 from hydrots.validator import TSValidator
 from hydrots.summary import TSSummary
+from hydrots.signature import TSSignature
 
 class HydroTS: 
 
@@ -221,6 +222,10 @@ class HydroTS:
     @property 
     def summary(self):
         return TSSummary(self)
+
+    @property 
+    def signature(self): 
+        return TSSignature(self)
 
     @property 
     def valid_data(self): 
