@@ -55,9 +55,17 @@ class HydroTS:
         """Check if dataframe has the minimum number of years at the specified availability."""
         return self.validator.is_valid()
 
-    def update_water_year(self, use_water_year: bool = True, use_local_water_year: bool = True, wettest: bool = True): 
+    def update_water_year(self, 
+                          use_water_year: bool = True, 
+                          water_year_start: Optional[tuple[int, int]] = None,
+                          use_local_water_year: bool = True, 
+                          wettest: bool = True): 
+
         if use_water_year:
-            self.water_year_start = self._get_water_year_start(self.data, use_local_water_year, wettest=wettest)
+            if water_year_start is not None: 
+                self.water_year_start = water_year_start 
+            else:
+                self.water_year_start = self._get_water_year_start(self.data, use_local_water_year, wettest=wettest)
         else:
             self.water_year_start = (1, 1) # Jan 1 
 
