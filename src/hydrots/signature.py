@@ -64,8 +64,36 @@ class TSSignature:
             rbi = compute_rbi(df)
         return rbi
     
-    def discharge_variability_index(self): 
-        pass
+    def cumulative_discharge_variability_index(self): 
+        df = self.ts.data.copy()
+        df = df[df['water_year'].isin(self.ts.valid_years)]
 
-    def cumulative_discharge_variability_index(self):
-        pass
+        q_avg = df['Q'].mean()         
+        q_05 = df['Q'].quantile(0.05) 
+        q_95 = df['Q'].quantile(0.95)
+        return (q_95 - q_05) / q_avg 
+
+    def discharge_variability_index(self): #, min_monthly_availability: Optional[float] = None):
+        # if min_monthly_availability is not None: 
+        #     min_monthly_availability_orig = self.ts.validator.criteria.get('min_monthly_availability')
+        #     self.ts.validator.update_criteria(min_monthly_availability=min_monthly_availability)
+
+        df = self.ts.data.copy()
+        df = df[df['water_year'].isin(self.ts.valid_years)]
+
+        q_avg = df['Q'].mean()         
+        df_month = df['Q'].resample('MS').mean() 
+        df_avail = df['Q'].resample('MS').count() / df['Q'].resample('MS').size()
+        df_month = pd.DataFrame({'Q_mean': df_month, 'Q_month_avail': df_avail})
+        # if min_monthly_availability is not None: 
+        #     df_month = df_month[df_month['Q_month_avail'] >= min_monthly_availability]
+
+        df_month = df_month.groupby(df_month.index.month)['Q_mean'].mean()
+        q_max = df_month.max()
+        q_min = df_month.min()
+
+        # # Reset min_monthly_availability if it was changed
+        # if min_monthly_availability is not None: 
+        #     self.ts.validator.update_criteria(min_monthly_availability=min_monthly_availability_orig)
+
+        return (q_max - q_min) / q_avg

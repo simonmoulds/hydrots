@@ -19,7 +19,13 @@ x = pd.read_csv(DATADIR / 'data' / f'{id}.csv')
 
 ts = hts.HydroTS(x, metadata=None, freq='1D')
 ts.update_validity_criteria(start_year=1960, end_year=2020, min_tot_years=40, min_availability=0.95)
-ts.update_water_year(wettest=True)
+# ts.update_water_year(wettest=True)
+ts.update_water_year(use_water_year=False)
+
+# ts.signature.coefficient_of_variation()
+# ts.signature.richards_baker_index()
+# ts.signature.discharge_variability_index()
+# ts.signature.cumulative_discharge_variability_index()
 
 min7 = ts.summary.n_day_low_flow_extreme(n=7)
 min30 = ts.summary.n_day_low_flow_extreme(n=30)

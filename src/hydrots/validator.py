@@ -13,13 +13,14 @@ class TSValidator:
                  end_year: Optional[int] = None,
                  min_tot_years: Optional[int] = None,
                  min_consecutive_years: Optional[int] = None,
-                 min_availability: Optional[float] = None):
+                 min_availability: Optional[float] = None, 
+                 min_monthly_availability: Optional[float] = None):
 
         self.data = data  # Expect data to be formatted with datetime index and single/multi column
         self.data_columns = data_columns
         self.freq = freq
         self.criteria: Dict[str, Optional[float | int]] = {}
-        self._set_validity_criteria(start_year, end_year, min_tot_years, min_consecutive_years, min_availability)
+        self._set_validity_criteria(start_year, end_year, min_tot_years, min_consecutive_years, min_availability, min_monthly_availability)
         self._compute_annual_availability()
 
     def _set_validity_criteria(self,
@@ -27,14 +28,16 @@ class TSValidator:
                                end_year: Optional[int],
                                min_tot_years: Optional[int],
                                min_consecutive_years: Optional[int],
-                               min_availability: Optional[float]):
+                               min_availability: Optional[float],
+                               min_monthly_availability: Optional[float]):
 
         new_values = {
             'start_year': start_year,
             'end_year': end_year,
             'min_tot_years': min_tot_years,
             'min_consecutive_years': min_consecutive_years,
-            'min_availability': min_availability
+            'min_availability': min_availability,
+            'min_monthly_availability': min_monthly_availability
         }
 
         # Only store non-None values
@@ -54,14 +57,17 @@ class TSValidator:
             kwargs.get('min_tot_years', self.criteria.get('min_tot_years')),
             kwargs.get('min_consecutive_years', self.criteria.get('min_consecutive_years')),
             kwargs.get('min_availability', self.criteria.get('min_availability')),
-            # kwargs.get('min_monthly_availability', self.criteria.get('min_monthly_availability'))
+            kwargs.get('min_monthly_availability', self.criteria.get('min_monthly_availability'))
         )
         return self
 
     @property 
     def valid_years(self): 
+
         min_avail = self.criteria.get('min_availability')
-        if min_avail is None:
+        min_monthly_avail = self.criteria.get('min_monthly_availability')
+
+        if min_avail is None and min_monthly_avail is None:
             return None
 
         # Slice by start/end year if provided
@@ -74,8 +80,30 @@ class TSValidator:
         if end is not None:
             avail = avail[avail.index <= end]
 
-        valid_mask = avail >= min_avail
-        return avail.index[valid_mask]
+        # Apply annual availability mask if needed
+        valid_mask = pd.Series(True, index=avail.index)
+        if min_avail is not None:
+            valid_mask &= (avail >= min_avail)
+
+        # Apply monthly availability check if specified
+        if min_monthly_avail is not None:
+            df = self.data.copy()  # DataFrame with datetime index and column 'Q'
+            df['year'] = df.index.year
+            df['month'] = df.index.month
+            df['is_valid'] = ~df[self.data_columns].isna()
+
+            # Count valid days per (year, month)
+            monthly_valid_counts = df.groupby(['year', 'month'])['is_valid'].sum()
+            # Total days per (year, month)
+            monthly_total_days = df.groupby(['year', 'month'])['is_valid'].count()
+            # Monthly availability [unstack() puts months into columns]
+            monthly_avail = (monthly_valid_counts / monthly_total_days).unstack()
+
+            # Check that all months in a year meet the threshold
+            monthly_valid_years = (monthly_avail >= min_monthly_avail).all(axis=1)
+            valid_mask &= valid_mask.index.isin(monthly_valid_years[monthly_valid_years].index)
+
+        return valid_mask[valid_mask].index
 
     def _compute_annual_availability(self) -> pd.Series:
         """Compute fraction of non-NaN values per year."""
