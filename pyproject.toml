@@ -23,7 +23,8 @@ dependencies = [
   "numba",
   "numpy",
   "pandas",
-  "scipy"
+  "scipy",
+  "baseflow"
 ]
 
 [project.optional-dependencies]

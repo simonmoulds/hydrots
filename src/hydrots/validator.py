@@ -16,11 +16,13 @@ class TSValidator:
                  min_availability: Optional[float] = None, 
                  min_monthly_availability: Optional[float] = None):
 
+        # TODO check that this is updated when HydroTS object is updated (e.g. when water year is recomputed)
         self.data = data  # Expect data to be formatted with datetime index and single/multi column
         self.data_columns = data_columns
         self.freq = freq
         self.criteria: Dict[str, Optional[float | int]] = {}
         self._set_validity_criteria(start_year, end_year, min_tot_years, min_consecutive_years, min_availability, min_monthly_availability)
+        self._compute_valid_years()
         self._compute_annual_availability()
 
     def _set_validity_criteria(self,
@@ -50,7 +52,7 @@ class TSValidator:
                 "`min_availability` must be specified when using `min_tot_years` or `min_consecutive_years`"
             )
 
-    def update_criteria(self, **kwargs):
+    def _update_criteria(self, **kwargs):
         self._set_validity_criteria(
             kwargs.get('start_year', self.criteria.get('start_year')),
             kwargs.get('end_year', self.criteria.get('end_year')),
@@ -61,9 +63,11 @@ class TSValidator:
         )
         return self
 
-    @property 
-    def valid_years(self): 
+    def update(self, **kwargs): 
+        self._update_criteria(**kwargs)
+        self._compute_valid_years() 
 
+    def _compute_valid_years(self):
         min_avail = self.criteria.get('min_availability')
         min_monthly_avail = self.criteria.get('min_monthly_availability')
 
@@ -103,7 +107,8 @@ class TSValidator:
             monthly_valid_years = (monthly_avail >= min_monthly_avail).all(axis=1)
             valid_mask &= valid_mask.index.isin(monthly_valid_years[monthly_valid_years].index)
 
-        return valid_mask[valid_mask].index
+        # return valid_mask[valid_mask].index
+        self._valid_years = valid_mask[valid_mask].index
 
     def _compute_annual_availability(self) -> pd.Series:
         """Compute fraction of non-NaN values per year."""
@@ -128,6 +133,10 @@ class TSValidator:
             group = (diffs != 1).cumsum()
             return group.value_counts().max()
         return None
+
+    @property 
+    def valid_years(self): 
+        return self._valid_years
 
     def is_valid(self) -> Optional[bool]:
         checks = []

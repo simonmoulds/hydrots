@@ -4,3 +4,4 @@ pandas==2.2.3
 bmipy==2.0.1
 scipy==1.15.2
 typer==0.15.2
+baseflow==0.1.0

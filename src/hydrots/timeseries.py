@@ -8,8 +8,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, Dict, List
 
 from hydrots.validator import TSValidator
-from hydrots.summary import TSSummary
-from hydrots.signature import TSSignature
+from hydrots.summary.summary import TSSummary
 
 class HydroTS: 
 
@@ -38,7 +37,8 @@ class HydroTS:
         self.validator = TSValidator(self.data, self.data_columns, self.freq)
 
     def update_validity_criteria(self, **kwargs): 
-        self.validator.update_criteria(**kwargs)
+        # self.validator.update_criteria(**kwargs)
+        self.validator.update(**kwargs)
 
     def update_intermittency_criteria(self, min_zero_flow_days: int = 5, min_zero_flow_years: int = 1): 
         if min_zero_flow_years > self.n_years: 
@@ -70,6 +70,7 @@ class HydroTS:
             self.water_year_start = (1, 1) # Jan 1 
 
         self.data = self._assign_water_year(self.data)
+        self.validator.update()
 
     def _format_data(self, data: pd.DataFrame, use_water_year: bool, use_local_water_year: bool, wettest: bool):
         data = self._standardize_columns(data)
@@ -196,6 +197,7 @@ class HydroTS:
         if min_zero_flow_years > self.n_years: 
             warnings.warn(f'`min_zero_flow_years` exceeds total number of valid years (={self.n_years}): setting value to {self.n_years}')
             min_zero_flow_years = self.n_years 
+        
         # Filter the dataframe for available years
         data = self.data[self.data.index.year.isin(self.valid_years)]
         
@@ -224,6 +226,10 @@ class HydroTS:
         return self.validator.valid_years 
 
     @property 
+    def valid_data(self): 
+        return self.data[self.data['water_year'].isin(self.validator.valid_years)]
+
+    @property 
     def n_years(self):
         return len(self.valid_years)
 
@@ -231,9 +237,9 @@ class HydroTS:
     def summary(self):
         return TSSummary(self)
 
-    @property 
-    def signature(self): 
-        return TSSignature(self)
+    # @property 
+    # def signature(self): 
+    #     return TSSignature(self)
 
     @property 
     def valid_data(self): 
