@@ -127,13 +127,19 @@ class EventBasedSummary(BaseSummary):
         duration = self._compute_duration(grouped_data)
 
         # Now aggregate the events 
-        result = events.groupby('water_year').agg(n_events=('water_year', 'size'), mean_duration=('event_duration', 'mean'), total_duration=('event_duration', 'sum'))
-        result = pd.DataFrame(result, index=self.ts.valid_years)
-        result['n_events'] = result['n_events'].fillna(0).astype(int)
+        if isinstance(events, pd.DataFrame):
+            result = events.groupby('water_year').agg(n_events=('water_year', 'size'), mean_duration=('event_duration', 'mean'), total_duration=('event_duration', 'sum'))
+            result = pd.DataFrame(result, index=self.ts.valid_years)
+            result['n_events'] = result['n_events'].fillna(0).astype(int)
+        else:
+            result = pd.DataFrame({'water_year': self.ts.valid_years, 'n_events': 0, 'mean_duration': None, 'total_duration': None})
+
         result = self._get_grouped_data(result, by_year=by_year, rolling=rolling, center=center)
         result = result.groupby('group').agg(
             n_events=('n_events', 'sum'), # Take the water year of the event start
             mean_event_duration=('mean_duration', 'mean'),
             total_duration=('total_duration', 'sum')
         )
-        return pd.merge(result, duration, left_index=True, right_index=True)
+        result = pd.merge(result, duration, left_index=True, right_index=True)
+        # result['frequency'] = result['total_duration'] / result['summary_period_duration']
+        return result
