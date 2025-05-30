@@ -365,6 +365,9 @@ class _NoFlowEvents(EventBasedSummary):
             event_end_time=('time', 'max'),
             event_duration=('time', lambda x: (x.max() - x.min())) #).days + 1)
         )
+        if events.shape[0] == 0:
+            events = None 
+
         if summarise:
             summary = self._summarize_events(events, by_year=by_year, rolling=rolling, center=center)
             return events, summary
@@ -409,18 +412,18 @@ class _DryDownPeriod(EventBasedSummary):
         else:
             return dry_down_events
 
-class _NoFlowFraction(EventBasedSummary): 
-    def compute(self, by_year=False, rolling=None, center=False): 
-        def noflow(vals): 
-            return vals < 0.001
+# class _NoFlowFraction(EventBasedSummary): 
+#     def compute(self, by_year=False, rolling=None, center=False): 
+#         def noflow(vals): 
+#             return vals < 0.001
 
-        data = self._simple_flow_events(noflow)
-        data = self._get_grouped_data(data, by_year=by_year, rolling=rolling, center=center)
-        duration = self._compute_duration(data)
-        result = data.groupby('group')['event_duration'].sum().to_frame(name='event_duration')
-        result = pd.merge(result, duration, left_index=True, right_index=True)
-        result['noflow_fraction'] = result['event_duration'] / result['summary_period_duration']
-        return result[['noflow_fraction']]
+#         data = self._simple_flow_events(noflow)
+#         data = self._get_grouped_data(data, by_year=by_year, rolling=rolling, center=center)
+#         duration = self._compute_duration(data)
+#         result = data.groupby('group')['event_duration'].sum().to_frame(name='event_duration')
+#         result = pd.merge(result, duration, left_index=True, right_index=True)
+#         result['noflow_fraction'] = result['event_duration'] / result['summary_period_duration']
+#         return result[['noflow_fraction']]
 
 class _HighFlowFraction(EventBasedSummary): 
     def compute(self, threshold, by_year=False, rolling=None, center=False): 
@@ -547,9 +550,9 @@ def slope_flow_duration_curve(ts_or_df, **kwargs):
 def baseflow_index(ts_or_df, method='LH', **kwargs): 
     return BFI(ts_or_df).compute(method=method, **kwargs)
 
-@register_summary_method 
-def no_flow_fraction(ts_or_df, **kwargs):
-    return _NoFlowFraction(ts_or_df).compute(**kwargs)
+# @register_summary_method 
+# def no_flow_fraction(ts_or_df, **kwargs):
+#     return _NoFlowFraction(ts_or_df).compute(**kwargs)
 
 @register_summary_method 
 def high_flow_fraction(ts_or_df, **kwargs):
