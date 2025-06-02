@@ -30,7 +30,7 @@ class HydroTS:
                  wettest: bool = True):
 
         self.freq = freq 
-        self.data = self._format_data(data, use_local_water_year, use_water_year, wettest=wettest)
+        self.data = self._format_data(data, use_water_year, use_local_water_year, wettest=wettest)
         self.metadata = self._format_metadata(metadata)
 
         # TODO change type of validator depending on application

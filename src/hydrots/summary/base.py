@@ -40,6 +40,7 @@ class BaseSummary:
 
     def _get_grouped_data(self, data, by_year=False, rolling=None, center=False):
 
+        # FIXME this will return an error if there are no valid years
         years = sorted(self.ts.valid_years)
 
         # Remove time index, because this won't work with overlapping groups (i.e. when `rolling` is set)
