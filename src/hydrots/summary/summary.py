@@ -238,7 +238,8 @@ class _SFDC(BaseSummary):
 class BFI(BaseSummary):
     def compute(self, method='LH', by_year=False, rolling=None, center=False, safe=True): 
         data = self.data.copy()
-        Q = data.dropna(subset='Q')['Q'].values
+        data = data.dropna(subset='Q')
+        Q = data['Q'].values
         if method.upper() == 'LH': 
             Qb = lh(Q)
         else:
