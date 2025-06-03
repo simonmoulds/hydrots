@@ -154,7 +154,7 @@ class EventBasedSummary(BaseSummary):
             if n_events == 0: 
                 return 0.
             else: 
-                return float(row['mean_event_duration'].dt.days)
+                return float(row['mean_event_duration'].days)
 
         result['frequency'] = result.apply(get_event_frequency, axis=1)
         result['mean_event_duration_days'] = result.apply(get_mean_event_duration_days, axis=1)
