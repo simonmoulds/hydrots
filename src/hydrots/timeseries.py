@@ -137,14 +137,38 @@ class HydroTS:
     def _get_local_water_year_start(self, data: pd.DataFrame, wettest: bool = True):
         """Compute the start of the local water year.
 
-        If `wettest=True` then we assume the water year starts in the 
-        first month after the highest mean monthly flow. This is 
-        appropriate for computing low-flow statistics. On the other 
-        hand, if `wettest=False` then we assume the water year starts 
-        in the driest month on average. This is more appropriate for 
-        computing high-flow statistics.  
+        Parameters 
+        ----------
+        data : pd.DataFrame 
+            A DataFrame containing at least the following columns:
+            - 'time' (np.datetime64): Timestamps.
+            - 'Q' (float): Discharge values.
+        wettest : bool
+            If `wettest=True` then we assume the water year starts in 
+            the first month after the highest mean monthly flow. This is 
+            appropriate for computing low-flow statistics. On the other 
+            hand, if `wettest=False` then we assume the water year 
+            starts in the driest month on average. This is more 
+            appropriate for computing high-flow statistics.  
+
+        Raises
+        ------
+        ValueError
+            If any month has no data over the entire time period.
+
+        References
+        ----------
+        .. [1]  Chagas, V. B. P., Chaffe, P. L. B., & Blöschl, G. (2024). 
+                Regional low flow hydrology: Model development and 
+                evaluation. Water Resources Research, 60, e2023WR035063. 
+                https://doi.org/10.1029/2023WR035063 
         """
         qmean = data.groupby(data.index.month)['Q'].mean()
+        n_nan = qmean.isna().sum()
+        if n_nan > 0:
+            msg = f'Cannot compute local water year because {n_nan} months have no data over the entire period'
+            raise ValueError(msg)
+
         if wettest: 
             # Assume water year starts in the first month after the highest mean monthly flow
             # https://doi.org/10.1029/2023WR035063 

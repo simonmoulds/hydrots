@@ -40,7 +40,7 @@ ts.summary.n_day_low_flow_extreme(rolling=5)
 import hydrots.summary.summary as hsm
 importlib.reload(hsm)
 
-res = hsm.no_flow_events(ts, summarise=False)
+res, summary = hsm.no_flow_events(ts, summarise=True)
 
 res = hsm.flow_quantile(ts, quantile=0.95)
 res = hsm.flow_quantile(ts, quantile=0.05)
