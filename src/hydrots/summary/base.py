@@ -145,14 +145,14 @@ class EventBasedSummary(BaseSummary):
 
         # Compute frequency and mean duration in days 
         def get_event_frequency(row): 
-            total_duration = row['total_duration'].iloc[0]
-            summary_period_duration = row['summary_period_duration'].iloc[0]
+            total_duration = row['total_duration']
+            summary_period_duration = row['summary_period_duration']
             return total_duration / summary_period_duration
         
         def get_mean_event_duration_days(row): 
-            n_events = row['n_events'].iloc[0]
+            n_events = row['n_events']
             if n_events == 0: 
-                return 0 
+                return 0.
             else: 
                 return float(row['mean_duration'].dt.days)
 
