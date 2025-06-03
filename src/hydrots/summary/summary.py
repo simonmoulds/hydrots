@@ -287,10 +287,10 @@ class _DVIc(BaseSummary):
 
         def compute_dvic(group): 
             q_avg = group['Q'].mean()         
-            # q_05 = group['Q'].quantile(0.05) 
-            # q_95 = group['Q'].quantile(0.95)
-            q_05 = group['Q'].min()
-            q_95 = group['Q'].max()
+            group = group.set_index('time')
+            group_month = group['Q'].resample('MS').mean() 
+            q_05 = group_month.min()
+            q_95 = group_month.max()
             return (q_95 - q_05) / q_avg 
 
         if safe: 
@@ -354,9 +354,9 @@ class _HighFlowEvents(EventBasedSummary):
 
 class _NoFlowEvents(EventBasedSummary): 
 
-    def compute(self, summarise=False, by_year=False, rolling=None, center=False): 
+    def compute(self, threshold = 0.001, summarise=False, by_year=False, rolling=None, center=False): 
         data = self.data.copy()
-        data['noflow'] = np.where(data['Q'] <= 0.001, 1, 0)
+        data['noflow'] = np.where(data['Q'] <= threshold, 1, 0)
         rle_no_flow = [(k, len(list(v))) for k, v in itertools.groupby(data['noflow'])]
         event_ids = [[i] * grp[1] for i, grp in enumerate(rle_no_flow)]
         event_ids = list(itertools.chain.from_iterable(event_ids))
@@ -493,8 +493,8 @@ def peaks_over_threshold(ts_or_df, threshold: float, min_diff: int = 24, summari
     return _POT(ts_or_df).compute(threshold=threshold, min_diff=min_diff, summarise=summarise, **kwargs)
 
 @register_summary_method
-def no_flow_events(ts_or_df, summarise=False, **kwargs): 
-    return _NoFlowEvents(ts_or_df).compute(summarise=summarise, **kwargs)
+def no_flow_events(ts_or_df, threshold: float = 0.001, summarise=False, **kwargs): 
+    return _NoFlowEvents(ts_or_df).compute(threshold=threshold, summarise=summarise, **kwargs)
 
 @register_summary_method
 def low_flow_events(ts_or_df, summarise=False, **kwargs):
