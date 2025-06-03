@@ -356,7 +356,7 @@ class _NoFlowEvents(EventBasedSummary):
 
     def compute(self, threshold = 0.001, summarise=False, by_year=False, rolling=None, center=False): 
         data = self.data.copy()
-        data['noflow'] = np.where(data['Q'] <= threshold, 1, 0)
+        data['noflow'] = np.where(data['Q'] < threshold, 1, 0)
         rle_no_flow = [(k, len(list(v))) for k, v in itertools.groupby(data['noflow'])]
         event_ids = [[i] * grp[1] for i, grp in enumerate(rle_no_flow)]
         event_ids = list(itertools.chain.from_iterable(event_ids))
