@@ -286,8 +286,10 @@ class _DVIc(BaseSummary):
 
         def compute_dvic(group): 
             q_avg = group['Q'].mean()         
-            q_05 = group['Q'].quantile(0.05) 
-            q_95 = group['Q'].quantile(0.95)
+            # q_05 = group['Q'].quantile(0.05) 
+            # q_95 = group['Q'].quantile(0.95)
+            q_05 = group['Q'].min()
+            q_95 = group['Q'].max()
             return (q_95 - q_05) / q_avg 
 
         if safe: 

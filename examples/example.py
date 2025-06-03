@@ -23,6 +23,9 @@ ts.update_validity_criteria(start_year=1960, end_year=2020, min_tot_years=40, mi
 # ts.update_water_year(wettest=True)
 ts.update_water_year(use_water_year=False)
 
+# BFI 
+ts.summary.baseflow_index()
+
 # Richards-Baker index
 ts.summary.richards_baker_index(by_year=False)
 ts.summary.richards_baker_index(by_year=True)
