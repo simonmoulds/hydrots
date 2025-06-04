@@ -354,7 +354,7 @@ class _HighFlowEvents(EventBasedSummary):
 
 class _NoFlowEvents(EventBasedSummary): 
 
-    def compute(self, threshold = 0.001, summarise=False, by_year=False, rolling=None, center=False): 
+    def compute(self, threshold: float = 0.001, summarise: bool = False, by_year: bool = False, rolling: Optional[bool] = None, center: bool = False): 
         data = self.data.copy()
         data['noflow'] = np.where(data['Q'] < threshold, 1, 0)
         rle_no_flow = [(k, len(list(v))) for k, v in itertools.groupby(data['noflow'])]
@@ -415,18 +415,26 @@ class _DryDownPeriod(EventBasedSummary):
         else:
             return dry_down_events
 
-# class _NoFlowFraction(EventBasedSummary): 
-#     def compute(self, by_year=False, rolling=None, center=False): 
-#         def noflow(vals): 
-#             return vals < 0.001
 
-#         data = self._simple_flow_events(noflow)
-#         data = self._get_grouped_data(data, by_year=by_year, rolling=rolling, center=center)
-#         duration = self._compute_duration(data)
-#         result = data.groupby('group')['event_duration'].sum().to_frame(name='event_duration')
-#         result = pd.merge(result, duration, left_index=True, right_index=True)
-#         result['noflow_fraction'] = result['event_duration'] / result['summary_period_duration']
-#         return result[['noflow_fraction']]
+class _NoFlowFraction(EventBasedSummary): 
+    def compute(self, threshold: float = 0.001, by_year=False, rolling=None, center=False): 
+        def noflow(vals, threshold): 
+            return vals < threshold
+
+        data = self._simple_flow_events(noflow, threshold=threshold)
+        data = self._get_grouped_data(data, by_year=by_year, rolling=rolling, center=center)
+        # duration = self._compute_duration(data)
+        # result = data.groupby('group')['event_duration'].sum().to_frame(name='event_duration')
+
+        result = data.groupby('group').agg(
+            event_duration=('event_duration', 'sum'),
+            # summary_period_duration=('event_duration', lambda x: sum(~np.isnan(x)))
+            summary_period_duration=('time_window', 'sum')
+        )
+        # result = pd.merge(result, duration, left_index=True, right_index=True)
+        result['noflow_fraction'] = result['event_duration'] / result['summary_period_duration']
+        return result[['noflow_fraction']]
+
 
 class _HighFlowFraction(EventBasedSummary): 
     def compute(self, threshold, by_year=False, rolling=None, center=False): 
@@ -553,9 +561,9 @@ def slope_flow_duration_curve(ts_or_df, **kwargs):
 def baseflow_index(ts_or_df, method='LH', **kwargs): 
     return BFI(ts_or_df).compute(method=method, **kwargs)
 
-# @register_summary_method 
-# def no_flow_fraction(ts_or_df, **kwargs):
-#     return _NoFlowFraction(ts_or_df).compute(**kwargs)
+@register_summary_method 
+def no_flow_fraction(ts_or_df, threshold, **kwargs):
+    return _NoFlowFraction(ts_or_df).compute(threshold=threshold, **kwargs)
 
 @register_summary_method 
 def high_flow_fraction(ts_or_df, **kwargs):
@@ -563,7 +571,7 @@ def high_flow_fraction(ts_or_df, **kwargs):
         threshold = ts_or_df.data['Q'].median() * 9
     else:
         threshold = ts_or_df['Q'].median() * 9
-    return _HighFlowFraction(ts_or_df).compute(**kwargs)
+    return _HighFlowFraction(ts_or_df).compute(threshold=threshold, **kwargs)
 
 @register_summary_method 
 def low_flow_fraction(ts_or_df, **kwargs):
@@ -571,7 +579,7 @@ def low_flow_fraction(ts_or_df, **kwargs):
         threshold = ts_or_df.data['Q'].mean() * 0.2
     else:
         threshold = ts_or_df['Q'].mean() * 0.2
-    return _LowFlowFraction(ts_or_df).compute(**kwargs)
+    return _LowFlowFraction(ts_or_df).compute(threshold=threshold, **kwargs)
 
 @register_summary_method 
 def discharge_variability_index(ts_or_df, **kwargs): 

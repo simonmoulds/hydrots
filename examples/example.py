@@ -24,6 +24,8 @@ ts.update_validity_criteria(start_year=1960, end_year=2020, min_tot_years=40, mi
 # ts.update_water_year(wettest=True)
 ts.update_water_year(use_water_year=False)
 
+ts.summary.no_flow_fraction(threshold=5)
+
 # BFI 
 ts.summary.baseflow_index()
 
@@ -43,6 +45,8 @@ ts.summary.n_day_low_flow_extreme(rolling=5)
 
 import hydrots.summary.summary as hsm
 importlib.reload(hsm)
+
+hsm.no_flow_fraction(ts, threshold=0.1)
 
 res, summary = hsm.no_flow_events(ts, summarise=True)
 
