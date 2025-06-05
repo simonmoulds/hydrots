@@ -5,10 +5,36 @@ import numpy as np
 import warnings
 
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Union
 
 from hydrots.validator import TSValidator
 from hydrots.summary.summary import TSSummary
+
+def is_regular(times: pd.Series) -> bool:
+    """
+    Check if a time series follows a regular frequency pattern,
+    even if some periods are missing.
+
+    Parameters
+    ----------
+    times : pd.Series
+        A datetime-like Series of timestamps (must be sorted and unique).
+
+    Returns
+    -------
+    bool
+        True if the time series is regular (i.e., evenly spaced), False otherwise.
+    """
+    times = pd.Series(pd.to_datetime(times)).dropna().sort_values().unique()
+    if len(times) < 3:
+        return True  # Can't tell much with < 3 points, assume regular
+    
+    diffs = pd.Series(times[1:] - times[:-1])
+    most_common_diff = diffs.mode().iloc[0]
+    # Check if all diffs are integer multiples of the mode
+    is_multiple = diffs.apply(lambda x: x / most_common_diff).apply(lambda x: x.is_integer())
+
+    return is_multiple.all()
 
 class HydroTS: 
 
@@ -24,17 +50,23 @@ class HydroTS:
     def __init__(self, 
                  data: pd.DataFrame, 
                  metadata: pd.DataFrame,
-                 freq: str, 
+                #  freq: Optional[Union[pd.Timedelta, str]] = None,
                  use_water_year: bool = True,
                  use_local_water_year: bool = True, 
                  wettest: bool = True):
 
-        self.freq = freq 
         self.data = self._format_data(data, use_water_year, use_local_water_year, wettest=wettest)
+
+        # # TODO how should irregular timeseries be handled?
+        # if freq:
+        #     self.freq = pd.Timedelta(freq)
+        # else:
+        #     self.freq = freq
+
         self.metadata = self._format_metadata(metadata)
 
         # TODO change type of validator depending on application
-        self.validator = TSValidator(self.data, self.data_columns, self.freq)
+        self.validator = TSValidator(self.data, self.data_columns) #, self.freq)
 
     def update_validity_criteria(self, **kwargs): 
         # self.validator.update_criteria(**kwargs)
@@ -75,10 +107,13 @@ class HydroTS:
     def _format_data(self, data: pd.DataFrame, use_water_year: bool, use_local_water_year: bool, wettest: bool):
         data = self._standardize_columns(data)
         data = self._validate_columns(data)
-        
+
         # Ensure time column is properly formatted
+        data = data.dropna(subset='time')
         data['time'] = pd.to_datetime(data['time'])
         data = data.sort_values(by='time')
+        
+        # Make time the index
         data = data.set_index('time')
         data.index.name = 'time'
 
@@ -87,8 +122,15 @@ class HydroTS:
         else:
             self.water_year_start = (1, 1) # Jan 1 
 
-        data = self._make_continuous(data)
+        if is_regular(data.index.to_series()): 
+            freq = data.index.to_series().diff().mode().iloc[0]
+            data = self._make_continuous(data, freq)
+        
+        # Timestep duration (days)
+        data['timestep'] = data.index.to_series().diff().shift(-1).dt.total_seconds() / 86400.
+
         data = self._assign_water_year(data)
+        
         return data 
 
     def _standardize_columns(self, data: pd.DataFrame):
@@ -112,11 +154,11 @@ class HydroTS:
         data = data[valid_columns]
         return data 
 
-    def _make_continuous(self, data: pd.DataFrame):
+    def _make_continuous(self, data: pd.DataFrame, freq: Union[pd.Timedelta, str]):
         """Enforce a continuous time series at the specified resolution."""
         start = data.index[0]
         end = data.index[-1]
-        full_range = pd.date_range(start=start, end=end, freq=self.freq)
+        full_range = pd.date_range(start=start, end=end, freq=freq)
         data = data.reindex(full_range)
         data.index.name = 'time'
         return data

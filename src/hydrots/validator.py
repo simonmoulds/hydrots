@@ -8,7 +8,7 @@ class TSValidator:
     def __init__(self, 
                  data: pd.DataFrame, 
                  data_columns: List[str],
-                 freq: str,
+                #  freq: str,
                  start_year: Optional[int] = None,
                  end_year: Optional[int] = None,
                  min_tot_years: Optional[int] = None,
@@ -19,7 +19,7 @@ class TSValidator:
         # TODO check that this is updated when HydroTS object is updated (e.g. when water year is recomputed)
         self.data = data  # Expect data to be formatted with datetime index and single/multi column
         self.data_columns = data_columns
-        self.freq = freq
+        # self.freq = freq
         self.criteria: Dict[str, Optional[float | int]] = {}
         self._set_validity_criteria(start_year, end_year, min_tot_years, min_consecutive_years, min_availability, min_monthly_availability)
         self._compute_valid_years()

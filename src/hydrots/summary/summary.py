@@ -425,11 +425,10 @@ class _NoFlowFraction(EventBasedSummary):
         data = self._get_grouped_data(data, by_year=by_year, rolling=rolling, center=center)
         # duration = self._compute_duration(data)
         # result = data.groupby('group')['event_duration'].sum().to_frame(name='event_duration')
-
         result = data.groupby('group').agg(
             event_duration=('event_duration', 'sum'),
             # summary_period_duration=('event_duration', lambda x: sum(~np.isnan(x)))
-            summary_period_duration=('time_window', 'sum')
+            summary_period_duration=('timestep', 'sum')
         )
         # result = pd.merge(result, duration, left_index=True, right_index=True)
         result['noflow_fraction'] = result['event_duration'] / result['summary_period_duration']

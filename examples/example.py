@@ -17,14 +17,15 @@ id = 'GB00055' # Lambourn at Shaw
 id = 'AU00001'
 
 x = pd.read_csv(DATADIR / 'data' / f'{id}.csv')
-x = pd.read_csv('data/extra/valid_data/OHDB_GBR_NRFA_00337.csv')
+x = pd.read_csv('data/extra/valid_data/OHDB_GBR_NRFA_00231.csv')
 
-ts = hts.HydroTS(x, metadata=None, freq='1D')
-ts.update_validity_criteria(start_year=1960, end_year=2020, min_tot_years=40, min_availability=0.95)
-# ts.update_water_year(wettest=True)
-ts.update_water_year(use_water_year=False)
+ts = hts.HydroTS(x, metadata=None)
+# ts.update_validity_criteria(start_year=1960, end_year=2020, min_tot_years=40, min_availability=0.9)
+# ts.update_water_year(use_water_year=False)
+ts.update_water_year(use_water_year=False) # Use calendar year 
+ts.update_validity_criteria(start_year=1950, end_year=2020, min_tot_years=20, min_availability=0.4)
 
-ts.summary.no_flow_fraction(threshold=5)
+ts.summary.no_flow_fraction(threshold=0.1)
 
 # BFI 
 ts.summary.baseflow_index()
@@ -45,6 +46,8 @@ ts.summary.n_day_low_flow_extreme(rolling=5)
 
 import hydrots.summary.summary as hsm
 importlib.reload(hsm)
+
+hsm.no_flow_fraction(ts, threshold=0.1)
 
 hsm.no_flow_fraction(ts, threshold=0.1)
 
