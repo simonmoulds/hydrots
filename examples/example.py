@@ -27,6 +27,13 @@ ts.update_validity_criteria(start_year=1950, end_year=2020, min_tot_years=20, mi
 
 ts.summary.no_flow_fraction(threshold=0.1)
 
+import hydrots.summary.baseflow as hbf
+importlib.reload(hbf)
+
+# Q = x['Q'].dropna().values 
+# v = hbf.lh(Q)
+# v = hbf.lh2(Q) 
+
 # BFI 
 ts.summary.baseflow_index()
 
