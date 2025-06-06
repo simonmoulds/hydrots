@@ -82,12 +82,11 @@ class EventBasedSummary(BaseSummary):
     def _simple_flow_events(self, event_condition, **kwargs): 
         data = self.data.copy()
         data = data.reset_index(drop=False)
-        # data['time_window'] = data['time'].diff().shift(-1).dt.days # Event duration in days
         vals = self.data['Q'].values 
-        data['is_event'] = event_condition(vals, **kwargs)
-        data['event_duration'] = data['is_event'] * data['timestep'] # timedelta64
+        is_event = event_condition(vals, **kwargs)
+        data['event_duration'] = is_event * data['timestep'] # timestep has units of days
         data = data.set_index('time')
-        return data[['timestep', 'event_duration']]
+        return data
 
     def _flow_events(self, event_condition, min_diff: int = 24, **kwargs) -> pd.DataFrame: 
         

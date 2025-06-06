@@ -54,17 +54,21 @@ ts.summary.n_day_low_flow_extreme(rolling=5)
 import hydrots.summary.summary as hsm
 importlib.reload(hsm)
 
+quantiles = [0.25, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95, 0.98, 0.99]
+res = hsm.flow_quantile(ts, quantile=quantiles, safe=True, by_year=False)
+res = hsm.flow_quantile(ts, quantile=0.05)
+
+res = hsm.high_flow_fraction(ts, threshold={'Q50': 0.27, 'Q80': 0.714})
+res = hsm.low_flow_fraction(ts)
+
 hsm.no_flow_fraction(ts, threshold=0.1)
 
 hsm.no_flow_fraction(ts, threshold=0.1)
 
 res, summary = hsm.no_flow_events(ts, summarise=True)
 
-res = hsm.flow_quantile(ts, quantile=0.95)
-res = hsm.flow_quantile(ts, quantile=0.05)
-
 res, summary = hsm.high_flow_events(ts, summarise=True)
-res = hsm._NDayFlowExtreme(ts).compute(by_year=True)
+res = hsm._NDayFlowExtreme(ts).compute(by_year=True, safe=True)
 res = hsm.discharge_variability_index(ts, by_year=True, safe=True)
 res = hsm.cumulative_discharge_variability_index(ts)
 res = hsm.richards_baker_index(ts)

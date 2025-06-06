@@ -18,13 +18,17 @@ COMMON_KWARGS_DOC = """
         Whether to center the rolling window.
 """
 
-def format_quantile(q: float) -> str:
-    q_int = int(round(q * 100))
-    return f"Q{q_int:02d}"
+def format_quantile(quantile: Union[float, list]) -> str:
+    if isinstance(quantile, float): 
+        quantile = [quantile]
+    quantile_int = [int(round(q * 100)) for q in quantile]
+    return [f"Q{q_int:02d}" for q_int in quantile_int]
 
 def make_safe(func, name=None):
     """Wraps a function to return {'<name>': result, 'error': error}."""
     metric_name = name or func.__name__
+    # if isinstance(metric_name, str):
+    #     metric_name = [metric_name]
 
     def safe_func(*args, **kwargs):
         try:
@@ -32,11 +36,22 @@ def make_safe(func, name=None):
             error = None
         except Exception as e:
             result, error = None, e
+            # if n_result > 1:
+            #     result = [result] * n_result
 
         if isinstance(result, (pd.Series, pd.DataFrame)): 
+            # if isinstance(result, pd.Series): 
+            #     result.name = None
+            #     result.index = metric_name 
+            # else:
+            #     result.columns = metric_name 
             result['error'] = error
             return result 
         else:
+            # if len(metric_name) > 1:
+            #     result_dict = {key:value for key, value in zip(metric_name, result)}
+            #     result_dict['error'] = error 
+            # else:
             return {metric_name: result, 'error': error}
     
     return safe_func
@@ -71,13 +86,31 @@ class _FlowQuantile(BaseSummary):
         def compute_quantile(group_df, q):
             return group_df['Q'].quantile(q)
 
+        def compute_multi_quantile_safe(group_df, q, label):
+            try:
+                result = compute_quantile(group_df, q)
+                error = None
+            except Exception as e:
+                result, error = None, e
+
+            result.name = None
+            result.index = label
+            # result = result.to_frame().T 
+            result['error'] = error
+            return result 
+
         label = format_quantile(quantile)
         if safe: 
-            compute_quantile_safe = make_safe(compute_quantile, name=label)
-            result = data.groupby('group').apply(compute_quantile_safe, q=quantile).apply(pd.Series)
+            if len(label) == 1:
+                label = label[0]
+                compute_quantile_safe = make_safe(compute_quantile, name=label)
+                result = data.groupby('group').apply(compute_quantile_safe, q=quantile).apply(pd.Series)
+            else:
+                result = data.groupby('group').apply(compute_multi_quantile_safe, q=quantile, label=label)
         else:
-            result = data.groupby('group')['Q'].quantile(quantile).to_frame(name=label)
-
+            result = data.groupby('group').apply(compute_quantile, q=quantile)
+            result.columns = label
+            
         return pd.merge(result, duration, left_index=True, right_index=True)
 
 
@@ -147,10 +180,10 @@ class _MaximumFlow(BaseSummary):
             return group_df['Q'].max() 
 
         if safe: 
-            compute_max_safe = make_safe(compute_max, name='Qmax')
+            compute_max_safe = make_safe(compute_max, name='QMAX')
             result = data.groupby('group').apply(compute_max_safe).apply(pd.Series)
         else:
-            result = data.groupby('group')['Q'].max().to_frame(name='Qmax')
+            result = data.groupby('group')['Q'].max().to_frame(name='QMAX')
 
         return pd.merge(result, duration, left_index=True, right_index=True)
 
@@ -437,16 +470,33 @@ class _NoFlowFraction(EventBasedSummary):
 
 class _HighFlowFraction(EventBasedSummary): 
     def compute(self, threshold, by_year=False, rolling=None, center=False): 
+
         def highflow(vals, threshold): 
             return vals > threshold
 
-        data = self._simple_flow_events(highflow, threshold=threshold)
-        data = self._get_grouped_data(data, by_year=by_year, rolling=rolling, center=center)
-        duration = self._compute_duration(data)
-        result = data.groupby('group')['event_duration'].sum().to_frame(name='event_duration')
-        result = pd.merge(result, duration, left_index=True, right_index=True)
-        result['highflow_fraction'] = result['event_duration'] / result['summary_period_duration']
-        return result[['highflow_fraction']]
+        def compute_high_flow_fraction(threshold):
+            data = self._simple_flow_events(highflow, threshold=threshold)
+            data['event_volume_above_threshold'] = (data['Q'] - threshold) * data['event_duration'] * 86400.
+            data = self._get_grouped_data(data, by_year=by_year, rolling=rolling, center=center)
+            result = data.groupby('group').agg(
+                event_duration=('event_duration', 'sum'),
+                event_volume_above_threshold=('event_volume_above_threshold', 'sum'),
+                summary_period_duration=('timestep', 'sum')
+            )
+            result['highflow_fraction'] = result['event_duration'] / result['summary_period_duration']
+            return result
+        
+        if isinstance(threshold, dict): 
+            result_list = []
+            for threshold_name, threshold_value in threshold.items():
+                result = compute_high_flow_fraction(threshold_value)
+                # result.columns = [threshold_name + '_' + column for column in result.columns]
+                result_list.append(result)
+            result = pd.concat(result_list, axis=0, keys=threshold.keys(), names=('threshold', 'group'))
+        else:
+            result = compute_high_flow_fraction(threshold)
+
+        return result[['highflow_fraction', 'event_duration', 'event_volume_above_threshold']]
 
 class _LowFlowFraction(EventBasedSummary): 
     def compute(self, threshold, by_year=False, rolling=None, center=False): 
@@ -455,11 +505,16 @@ class _LowFlowFraction(EventBasedSummary):
 
         data = self._simple_flow_events(lowflow, threshold=threshold)
         data = self._get_grouped_data(data, by_year=by_year, rolling=rolling, center=center)
-        duration = self._compute_duration(data)
-        result = data.groupby('group')['event_duration'].sum().to_frame(name='event_duration')
-        result = pd.merge(result, duration, left_index=True, right_index=True)
+        result = data.groupby('group').agg(
+            event_duration=('event_duration', 'sum'),
+            # event_volume_above_threshold=('event_volume_above_threshold', 'sum'),
+            summary_period_duration=('timestep', 'sum')
+        )
+        # duration = self._compute_duration(data)
+        # result = data.groupby('group')['event_duration'].sum().to_frame(name='event_duration')
+        # result = pd.merge(result, duration, left_index=True, right_index=True)
         result['lowflow_fraction'] = result['event_duration'] / result['summary_period_duration']
-        return result[['lowflow_fraction']]
+        return result[['lowflow_fraction', 'event_duration']]
 
 summary_method_registry = {}
 
@@ -565,19 +620,17 @@ def no_flow_fraction(ts_or_df, threshold, **kwargs):
     return _NoFlowFraction(ts_or_df).compute(threshold=threshold, **kwargs)
 
 @register_summary_method 
-def high_flow_fraction(ts_or_df, **kwargs):
-    if hasattr(ts_or_df, "valid_data"):
-        threshold = ts_or_df.data['Q'].median() * 9
-    else:
-        threshold = ts_or_df['Q'].median() * 9
+def high_flow_fraction(ts_or_df, threshold=None, **kwargs):
+    if not threshold:
+        Q = ts_or_df.valid_data['Q'] if hasattr(ts_or_df, "valid_data") else ts_or_df['Q']
+        threshold = Q.median() * 9.
     return _HighFlowFraction(ts_or_df).compute(threshold=threshold, **kwargs)
 
 @register_summary_method 
-def low_flow_fraction(ts_or_df, **kwargs):
-    if hasattr(ts_or_df, "valid_data"):
-        threshold = ts_or_df.data['Q'].mean() * 0.2
-    else:
-        threshold = ts_or_df['Q'].mean() * 0.2
+def low_flow_fraction(ts_or_df, threshold=None, **kwargs):
+    if not threshold:
+        Q = ts_or_df.valid_data['Q'] if hasattr(ts_or_df, "valid_data") else ts_or_df['Q']
+        threshold = Q.mean() * 0.2
     return _LowFlowFraction(ts_or_df).compute(threshold=threshold, **kwargs)
 
 @register_summary_method 
