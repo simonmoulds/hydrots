@@ -59,7 +59,7 @@ res = hsm.flow_quantile(ts, quantile=quantiles, safe=True, by_year=False)
 res = hsm.flow_quantile(ts, quantile=0.05)
 
 res = hsm.high_flow_fraction(ts, threshold={'Q50': 0.27, 'Q80': 0.714})
-res = hsm.low_flow_fraction(ts)
+res = hsm.low_flow_fraction(ts, threshold={'Q50': 0.27, 'Q80': 0.714})
 
 hsm.no_flow_fraction(ts, threshold=0.1)
 

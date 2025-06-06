@@ -503,17 +503,24 @@ class _LowFlowFraction(EventBasedSummary):
         def lowflow(vals, threshold): 
             return vals < threshold
 
-        data = self._simple_flow_events(lowflow, threshold=threshold)
-        data = self._get_grouped_data(data, by_year=by_year, rolling=rolling, center=center)
-        result = data.groupby('group').agg(
-            event_duration=('event_duration', 'sum'),
-            # event_volume_above_threshold=('event_volume_above_threshold', 'sum'),
-            summary_period_duration=('timestep', 'sum')
-        )
-        # duration = self._compute_duration(data)
-        # result = data.groupby('group')['event_duration'].sum().to_frame(name='event_duration')
-        # result = pd.merge(result, duration, left_index=True, right_index=True)
-        result['lowflow_fraction'] = result['event_duration'] / result['summary_period_duration']
+        def compute_low_flow_fraction(threshold):
+            data = self._simple_flow_events(lowflow, threshold=threshold)
+            data = self._get_grouped_data(data, by_year=by_year, rolling=rolling, center=center)
+            result = data.groupby('group').agg(
+                event_duration=('event_duration', 'sum'),
+                summary_period_duration=('timestep', 'sum')
+            )
+            result['lowflow_fraction'] = result['event_duration'] / result['summary_period_duration']
+            return result
+        
+        if isinstance(threshold, dict): 
+            result_list = []
+            for threshold_name, threshold_value in threshold.items():
+                result = compute_low_flow_fraction(threshold_value)
+                result_list.append(result)
+            result = pd.concat(result_list, axis=0, keys=threshold.keys(), names=('threshold', 'group'))
+        else:
+            result = compute_low_flow_fraction(threshold)
         return result[['lowflow_fraction', 'event_duration']]
 
 summary_method_registry = {}
