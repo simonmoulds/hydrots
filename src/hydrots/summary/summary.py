@@ -422,7 +422,7 @@ class _DryDownPeriod(EventBasedSummary):
         pot_events = _POT(self.ts).compute(threshold=threshold)
         noflow_events = _NoFlowEvents(self.ts).compute()
         if noflow_events is None or pot_events is None:
-            return None 
+            return None if not summarise else (None, None)
 
         high_flow_end_times = pot_events['event_end_time'].values
         noflow_start_times = noflow_events['event_start_time'].values
@@ -443,7 +443,7 @@ class _DryDownPeriod(EventBasedSummary):
                 dry_down_events.append(pd.DataFrame({'water_year': [water_year], 'event_start_time': [most_recent_high_end], 'event_end_time': [n], 'event_duration': [dry_down_period]}))
 
         if len(dry_down_events) == 0: 
-            return None 
+            return None if not summarise else (None, None)
 
         dry_down_events = pd.concat(dry_down_events, axis=0).reset_index(drop=True)
         if summarise:
