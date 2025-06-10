@@ -421,6 +421,8 @@ class _DryDownPeriod(EventBasedSummary):
         threshold = self.data['Q'].quantile(quantile)
         pot_events = _POT(self.ts).compute(threshold=threshold)
         noflow_events = _NoFlowEvents(self.ts).compute()
+        print(pot_events)
+        print(noflow_events)
         if not noflow_events or not pot_events:
             return None 
 
