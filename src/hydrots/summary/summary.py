@@ -393,7 +393,7 @@ class _NoFlowEvents(EventBasedSummary):
 
     def compute(self, threshold: float = 0.001, summarise: bool = False, by_year: bool = False, rolling: Optional[bool] = None, center: bool = False): 
         data = self.data.copy()
-        data['noflow'] = np.where(data['Q'] < threshold, 1, 0)
+        data['noflow'] = np.where(data['Q'] <= threshold, 1, 0)
         rle_no_flow = [(k, len(list(v))) for k, v in itertools.groupby(data['noflow'])]
         event_ids = [[i] * grp[1] for i, grp in enumerate(rle_no_flow)]
         event_ids = list(itertools.chain.from_iterable(event_ids))
@@ -446,6 +446,7 @@ class _DryDownPeriod(EventBasedSummary):
             return None if not summarise else (None, None)
 
         dry_down_events = pd.concat(dry_down_events, axis=0).reset_index(drop=True)
+        dry_down_events = dry_down_events.drop_duplicates(subset='event_start_time')
         if summarise:
             summary = self._summarize_events(dry_down_events, by_year=by_year, rolling=rolling, center=center)
             return dry_down_events, summary

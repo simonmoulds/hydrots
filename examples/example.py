@@ -17,7 +17,7 @@ id = 'GB00055' # Lambourn at Shaw
 id = 'AU00001'
 
 x = pd.read_csv(DATADIR / 'data' / f'{id}.csv')
-x = pd.read_csv('data/extra/valid_data/OHDB_GBR_NRFA_00231.csv')
+x = pd.read_csv('data/extra/valid_data/OHDB_GBR_NRFA_00254.csv')
 
 ts = hts.HydroTS(x, metadata=None)
 # ts.update_validity_criteria(start_year=1960, end_year=2020, min_tot_years=40, min_availability=0.9)
@@ -26,6 +26,40 @@ ts.update_water_year(use_water_year=False) # Use calendar year
 ts.update_validity_criteria(start_year=1950, end_year=2020, min_tot_years=20, min_availability=0.4)
 
 ts.summary.no_flow_fraction(threshold=0.1)
+
+# TESTING DRY DOWN PERIOD 
+threshold = ts.valid_data['Q'].quantile(0.25)
+pot_events = hsm._POT(ts).compute(threshold=threshold)
+noflow_events = hsm._NoFlowEvents(ts).compute(threshold=0.)
+high_flow_end_times = pot_events['event_end_time'].values
+noflow_start_times = noflow_events['event_start_time'].values
+
+dry_down_events = []
+j = 0  # pointer for noflow_start_dates
+for n in noflow_start_times:
+    # Advance j to find the last high flow before n
+    while j < len(high_flow_end_times) and high_flow_end_times[j] < n:
+        j += 1
+    if j == 0:
+        continue  # no high-flow end before this no-flow start
+    else:
+        most_recent_high_end = high_flow_end_times[j - 1]
+        # Need to do this because the water year in the pot_events dataframe corresponds to the start of the event, not the end
+        water_year = ts.valid_data.loc[most_recent_high_end, 'water_year']
+        dry_down_period = (n - most_recent_high_end).astype("timedelta64[D]").item()
+        dry_down_events.append(pd.DataFrame({'water_year': [water_year], 'event_start_time': [most_recent_high_end], 'event_end_time': [n], 'event_duration': [dry_down_period]}))
+
+if len(dry_down_events) == 0: 
+    return None if not summarise else (None, None)
+
+dry_down_events = pd.concat(dry_down_events, axis=0).reset_index(drop=True)
+dry_down_events = dry_down_events.drop_duplicates(subset='event_start_time') # FIXED
+
+# if summarise:
+#     summary = self._summarize_events(dry_down_events, by_year=by_year, rolling=rolling, center=center)
+#     return dry_down_events, summary
+# else:
+#     return dry_down_events
 
 import hydrots.summary.baseflow as hbf
 importlib.reload(hbf)
@@ -62,8 +96,8 @@ res = hsm.high_flow_fraction(ts, threshold={'Q50': 0.27, 'Q80': 0.714})
 res = hsm.low_flow_fraction(ts, threshold={'Q50': 0.27, 'Q80': 0.714})
 
 # FIXME - if list of length one is given then column names incorrect
-q50 = hsm.flow_quantile(ts, quantile=[0.5, 0.99], safe=True, by_year=False)['Q50']
-res = hsm.high_flow_fraction(ts, threshold={'Q50_times_1pt5': q50 * 1.5})
+q50 = hsm.flow_quantile(ts, quantile=[0.5, 0.99], safe=True, by_year=False)['Q50'].values
+res = hsm.high_flow_fraction(ts, threshold={'Q50_times_1pt5': q50 * 1.5}, by_year=True)
 
 hsm.no_flow_fraction(ts, threshold=0.1)
 
