@@ -242,9 +242,13 @@ class _SFDC(BaseSummary):
         data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
 
         def compute_slope_fdc(group, lower_q=0.33, upper_q=0.66):
-            qmean = group['Q'].mean() 
-            qlower = group['Q'].quantile(lower_q) / qmean
-            qupper = group['Q'].quantile(upper_q) / qmean
+            if lower_q >= upper_q: 
+                raise ValueError
+            # qmean = group['Q'].mean() 
+            # qlower = group['Q'].quantile(lower_q) / qmean
+            # qupper = group['Q'].quantile(upper_q) / qmean
+            qlower = group['Q'].quantile(lower_q) #/ qmean
+            qupper = group['Q'].quantile(upper_q) #/ qmean
 
             # Determine if the fdc has a slope at this tage and return the
             # corresponding values
@@ -252,13 +256,13 @@ class _SFDC(BaseSummary):
                 return 0
             else:
                 denominator = upper_q - lower_q
-                if qupper == 0 and not qlower == 0:
-                    # Negative slope [theoretically impossible?]
-                    return -np.log(qlower) / denominator
-                elif not qupper == 0 and qlower == 0:
+                # if qupper == 0 and not qlower == 0:
+                #     # Negative slope [theoretically impossible?]
+                #     return -np.log(qlower) / denominator
+                if qupper > 0 and qlower == 0:
                     return np.log(qupper) / denominator
                 else:
-                    return (np.log(qlower) - np.log(qupper)) / denominator
+                    return (np.log(qupper) - np.log(qlower)) / denominator
 
         if safe: 
             compute_slope_fdc_safe = make_safe(compute_slope_fdc, name='SFDC')
@@ -417,7 +421,7 @@ class _DryDownPeriod(EventBasedSummary):
         threshold = self.data['Q'].quantile(quantile)
         pot_events = _POT(self.ts).compute(threshold=threshold)
         noflow_events = _NoFlowEvents(self.ts).compute()
-        if noflow_events.shape[0] == 0 or pot_events.shape[0] == 0:
+        if not noflow_events or not pot_events:
             return None 
 
         high_flow_end_times = pot_events['event_end_time'].values

@@ -61,6 +61,10 @@ res = hsm.flow_quantile(ts, quantile=0.05)
 res = hsm.high_flow_fraction(ts, threshold={'Q50': 0.27, 'Q80': 0.714})
 res = hsm.low_flow_fraction(ts, threshold={'Q50': 0.27, 'Q80': 0.714})
 
+# FIXME - if list of length one is given then column names incorrect
+q50 = hsm.flow_quantile(ts, quantile=[0.5, 0.99], safe=True, by_year=False)['Q50']
+res = hsm.high_flow_fraction(ts, threshold={'Q50_times_1pt5': q50 * 1.5})
+
 hsm.no_flow_fraction(ts, threshold=0.1)
 
 hsm.no_flow_fraction(ts, threshold=0.1)
