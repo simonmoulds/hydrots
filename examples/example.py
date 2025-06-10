@@ -28,14 +28,16 @@ ts.update_validity_criteria(start_year=1950, end_year=2020, min_tot_years=20, mi
 ts.summary.no_flow_fraction(threshold=0.1)
 
 # TESTING DRY DOWN PERIOD 
+import hydrots.summary.summary as hsm
+importlib.reload(hsm)
 threshold = ts.valid_data['Q'].quantile(0.25)
 pot_events = hsm._POT(ts).compute(threshold=threshold)
 noflow_events = hsm._NoFlowEvents(ts).compute(threshold=0.)
 high_flow_end_times = pot_events['event_end_time'].values
 noflow_start_times = noflow_events['event_start_time'].values
-
 dry_down_events = []
 j = 0  # pointer for noflow_start_dates
+
 for n in noflow_start_times:
     # Advance j to find the last high flow before n
     while j < len(high_flow_end_times) and high_flow_end_times[j] < n:
@@ -48,9 +50,6 @@ for n in noflow_start_times:
         water_year = ts.valid_data.loc[most_recent_high_end, 'water_year']
         dry_down_period = (n - most_recent_high_end).astype("timedelta64[D]").item()
         dry_down_events.append(pd.DataFrame({'water_year': [water_year], 'event_start_time': [most_recent_high_end], 'event_end_time': [n], 'event_duration': [dry_down_period]}))
-
-if len(dry_down_events) == 0: 
-    return None if not summarise else (None, None)
 
 dry_down_events = pd.concat(dry_down_events, axis=0).reset_index(drop=True)
 dry_down_events = dry_down_events.drop_duplicates(subset='event_start_time') # FIXED
@@ -87,6 +86,8 @@ ts.summary.n_day_low_flow_extreme(rolling=5)
 
 import hydrots.summary.summary as hsm
 importlib.reload(hsm)
+
+res = hsm.dry_down_period(ts, summarise=True)
 
 quantiles = [0.25, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95, 0.98, 0.99]
 res = hsm.flow_quantile(ts, quantile=quantiles, safe=True, by_year=False)

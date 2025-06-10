@@ -447,6 +447,7 @@ class _DryDownPeriod(EventBasedSummary):
 
         dry_down_events = pd.concat(dry_down_events, axis=0).reset_index(drop=True)
         dry_down_events = dry_down_events.drop_duplicates(subset='event_start_time')
+
         if summarise:
             summary = self._summarize_events(dry_down_events, by_year=by_year, rolling=rolling, center=center)
             return dry_down_events, summary
