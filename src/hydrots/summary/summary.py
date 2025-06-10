@@ -415,6 +415,57 @@ class _NoFlowEvents(EventBasedSummary):
             return events
 
 class _DryDownPeriod(EventBasedSummary): 
+    
+    def _summarize_events(self, events, by_year, rolling, center): 
+        # First calculate the duration of each period
+        grouped_data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
+        duration = self._compute_duration(grouped_data)
+
+        # # Now aggregate the events 
+        # default_events = pd.DataFrame({'water_year': self.ts.valid_years, 'n_events': 0, 'mean_duration': None, 'total_duration': None})
+        # if isinstance(events, pd.DataFrame):
+        #     # missing_years = [yr for yr in self.ts.valid_years if yr not in events['water_year']]
+        #     # result = pd.concat([events, default_events[default_events['water_year'].isin(missing_years)]])
+        #     # result = result.sort_values('water_year').reset_index(drop=True)
+        #     result = events.groupby('water_year').agg(
+        #         n_events=('water_year', 'size'), 
+        #         mean_duration=('event_duration', 'mean'), 
+        #         total_duration=('event_duration', 'sum')
+        #     )
+        #     result = pd.DataFrame(result, index=self.ts.valid_years)
+        #     result['n_events'] = result['n_events'].fillna(0).astype(int)
+        # else:
+        #     result = default_events 
+
+        result = self._get_grouped_data(events, by_year=by_year, rolling=rolling, center=center)
+        result = result.groupby('group').agg(
+            n_events=('water_year', 'size'), # Take the water year of the event start
+            mean_event_duration=('event_duration', 'mean'),
+            total_duration=('event_duration', 'sum')
+        )
+        result = pd.merge(result, duration, left_index=True, right_index=True)
+
+        # Compute frequency and mean duration in days 
+        def get_event_frequency(row): 
+            try:
+                total_duration_days = row['total_duration'].days 
+            except AttributeError: 
+                total_duration_days = float(row['total_duration'])
+
+            summary_period_duration_days = row['summary_period_duration'].days
+            return total_duration_days / summary_period_duration_days
+        
+        def get_mean_event_duration_days(row): 
+            n_events = row['n_events']
+            if n_events == 0: 
+                return 0.
+            else: 
+                return float(row['mean_event_duration'].days)
+
+        result['frequency'] = result.apply(get_event_frequency, axis=1)
+        result['mean_event_duration_days'] = result.apply(get_mean_event_duration_days, axis=1)
+
+        return result
 
     def compute(self, quantile: float = 0.25, summarise=False, by_year=False, rolling=None, center=False) -> float: 
 

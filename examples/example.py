@@ -26,6 +26,7 @@ ts.update_water_year(use_water_year=False) # Use calendar year
 ts.update_validity_criteria(start_year=1950, end_year=2020, min_tot_years=20, min_availability=0.4)
 
 ts.summary.no_flow_fraction(threshold=0.1)
+events, res = ts.summary.dry_down_period(summarise=True)
 
 # TESTING DRY DOWN PERIOD 
 import hydrots.summary.summary as hsm
@@ -87,7 +88,7 @@ ts.summary.n_day_low_flow_extreme(rolling=5)
 import hydrots.summary.summary as hsm
 importlib.reload(hsm)
 
-res = hsm.dry_down_period(ts, summarise=True)
+_, res = hsm.dry_down_period(ts, summarise=True)
 
 quantiles = [0.25, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95, 0.98, 0.99]
 res = hsm.flow_quantile(ts, quantile=quantiles, safe=True, by_year=False)
