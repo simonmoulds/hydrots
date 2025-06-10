@@ -17,7 +17,7 @@ id = 'GB00055' # Lambourn at Shaw
 id = 'AU00001'
 
 x = pd.read_csv(DATADIR / 'data' / f'{id}.csv')
-x = pd.read_csv('data/extra/valid_data/OHDB_GBR_NRFA_00254.csv')
+x = pd.read_csv('data/extra/valid_data/OHDB_GBR_NRFA_00282.csv')
 
 ts = hts.HydroTS(x, metadata=None)
 # ts.update_validity_criteria(start_year=1960, end_year=2020, min_tot_years=40, min_availability=0.9)

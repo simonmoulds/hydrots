@@ -421,22 +421,6 @@ class _DryDownPeriod(EventBasedSummary):
         grouped_data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
         duration = self._compute_duration(grouped_data)
 
-        # # Now aggregate the events 
-        # default_events = pd.DataFrame({'water_year': self.ts.valid_years, 'n_events': 0, 'mean_duration': None, 'total_duration': None})
-        # if isinstance(events, pd.DataFrame):
-        #     # missing_years = [yr for yr in self.ts.valid_years if yr not in events['water_year']]
-        #     # result = pd.concat([events, default_events[default_events['water_year'].isin(missing_years)]])
-        #     # result = result.sort_values('water_year').reset_index(drop=True)
-        #     result = events.groupby('water_year').agg(
-        #         n_events=('water_year', 'size'), 
-        #         mean_duration=('event_duration', 'mean'), 
-        #         total_duration=('event_duration', 'sum')
-        #     )
-        #     result = pd.DataFrame(result, index=self.ts.valid_years)
-        #     result['n_events'] = result['n_events'].fillna(0).astype(int)
-        # else:
-        #     result = default_events 
-
         result = self._get_grouped_data(events, by_year=by_year, rolling=rolling, center=center)
         result = result.groupby('group').agg(
             n_events=('water_year', 'size'), # Take the water year of the event start
@@ -464,12 +448,14 @@ class _DryDownPeriod(EventBasedSummary):
 
         result['frequency'] = result.apply(get_event_frequency, axis=1)
         result['mean_event_duration_days'] = result.apply(get_mean_event_duration_days, axis=1)
-
         return result
 
     def compute(self, quantile: float = 0.25, summarise=False, by_year=False, rolling=None, center=False) -> float: 
 
         threshold = self.data['Q'].quantile(quantile)
+        if threshold == 0.:
+            return None if not summarise else (None, None)
+
         pot_events = _POT(self.ts).compute(threshold=threshold)
         noflow_events = _NoFlowEvents(self.ts).compute(threshold=0.)
         if noflow_events is None or pot_events is None:
