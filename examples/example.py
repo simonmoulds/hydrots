@@ -17,14 +17,16 @@ id = 'GB00055' # Lambourn at Shaw
 id = 'AU00001'
 
 x = pd.read_csv(DATADIR / 'data' / f'{id}.csv')
-x = pd.read_csv('data/extra/valid_data/OHDB_GBR_NRFA_00282.csv')
+x = pd.read_csv('data/extra/valid_data/OHDB_GBR_NRFA_00011.csv')
 
 ts = hts.HydroTS(x, metadata=None)
 # ts.update_validity_criteria(start_year=1960, end_year=2020, min_tot_years=40, min_availability=0.9)
 # ts.update_water_year(use_water_year=False)
 ts.update_water_year(use_water_year=False) # Use calendar year 
+ts.update_water_year(use_water_year=True, water_year_start=(7, 1))
 ts.update_validity_criteria(start_year=1950, end_year=2020, min_tot_years=20, min_availability=0.4)
 
+# qmax = ts.summary.maximum_flow(by_year=True)['QMAX']
 ts.summary.no_flow_fraction(threshold=0.1)
 events, res = ts.summary.dry_down_period(summarise=True)
 

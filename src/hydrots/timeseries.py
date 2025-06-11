@@ -33,7 +33,6 @@ def is_regular(times: pd.Series) -> bool:
     most_common_diff = diffs.mode().iloc[0]
     # Check if all diffs are integer multiples of the mode
     is_multiple = diffs.apply(lambda x: x / most_common_diff).apply(lambda x: x.is_integer())
-
     return is_multiple.all()
 
 class HydroTS: 
