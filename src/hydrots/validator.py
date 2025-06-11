@@ -66,6 +66,7 @@ class TSValidator:
     def update(self, **kwargs): 
         self._update_criteria(**kwargs)
         self._compute_valid_years() 
+        self._compute_annual_availability()
 
     def _compute_valid_years(self):
         min_avail = self.criteria.get('min_availability')
