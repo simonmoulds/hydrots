@@ -35,7 +35,7 @@ class BaseSummary:
         """
         return (
             data.groupby('group')['time']
-            .agg(summary_period_duration=lambda x: x.max() - x.min() + (x.iloc[1] - x.iloc[0])) # FIXME should be able to get time resolution from HydroTS object
+            .agg(summary_period_duration=lambda x: x.max() - x.min() + (self.ts.timestep)) # FIXME should be able to get time resolution from HydroTS object
         )
 
     def _get_grouped_data(self, data, by_year=False, rolling=None, center=False):
