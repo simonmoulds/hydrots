@@ -33,9 +33,13 @@ class BaseSummary:
         pd.DataFrame
             A DataFrame with group index and 'duration_days'.
         """
+        def myfun(x): 
+            print(x)
+            print(x.max() - x.min())
+            return x.max() - x.min() + ((x.iloc[1] - x.iloc[0]) if len(x) > 1 else 0)
         return (
             data.groupby('group')['time']
-            .agg(summary_period_duration=lambda x: x.max() - x.min() + ((x.iloc[1] - x.iloc[0]) if len(x) > 1 else 0)) # FIXME should be able to get time resolution from HydroTS object
+            .agg(summary_period_duration=lambda x: myfun(x)) #x.max() - x.min() + ((x.iloc[1] - x.iloc[0]) if len(x) > 1 else 0)) # FIXME should be able to get time resolution from HydroTS object
         )
 
     def _get_grouped_data(self, data, by_year=False, rolling=None, center=False):
