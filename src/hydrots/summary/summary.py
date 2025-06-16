@@ -25,49 +25,172 @@ def format_quantile(quantile: Union[float, list]) -> str:
     return [f"Q{q_int:02d}" for q_int in quantile_int]
 
 def make_safe(func, name=None):
-    """Wraps a function to return {'<name>': result, 'error': error}."""
+    """Wraps a function to return {'<name>': result, 'error': error}.
+    """
     metric_name = name or func.__name__
-    # if isinstance(metric_name, str):
-    #     metric_name = [metric_name]
-
     def safe_func(*args, **kwargs):
         try:
             result = func(*args, **kwargs)
             error = None
         except Exception as e:
             result, error = None, e
-            # if n_result > 1:
-            #     result = [result] * n_result
 
         if isinstance(result, (pd.Series, pd.DataFrame)): 
-            # if isinstance(result, pd.Series): 
-            #     result.name = None
-            #     result.index = metric_name 
-            # else:
-            #     result.columns = metric_name 
             result['error'] = error
             return result 
         else:
-            # if len(metric_name) > 1:
-            #     result_dict = {key:value for key, value in zip(metric_name, result)}
-            #     result_dict['error'] = error 
-            # else:
             return {metric_name: result, 'error': error}
     
     return safe_func
+
+
+def compute_cv(group): 
+    """Coefficient of variation."""
+    group = group.sort_index()
+    q_std = group['Q'].std()
+    q_mean = group['Q'].mean()
+    if q_mean == 0:
+        return np.nan 
+    return q_std / q_mean
+
+
+def compute_quantile(group_df, q):
+    """Flow quantile."""
+    return group_df['Q'].quantile(q)
+
+
+def compute_multi_quantile_safe(group_df, q, label):
+    """Calculate multiple flow quantiles at once."""
+    try:
+        result = compute_quantile(group_df, q)
+        error = None
+    except Exception as e:
+        result, error = None, e
+
+    result.name = None
+    result.index = label
+    # result = result.to_frame().T 
+    result['error'] = error
+    return result 
+
+
+def compute_skew(group):
+    qmean = group['Q'].mean()
+    q50 = group['Q'].quantile(0.5)
+    return qmean / q50 if q50 > 0 else 0
+
+
+def compute_rbi(group_df):
+    """Richards-Baker Index."""
+    group_df = group_df.sort_index()
+    q_diff = group_df['Q'].diff().abs()
+    total_q = group_df['Q'].sum()
+    if total_q == 0 or np.isnan(total_q):
+        return np.nan
+    return q_diff.sum() / total_q
+
+
+def compute_mean(group_df):
+    return group_df['Q'].mean() 
+
+
+def compute_max(group_df):
+    return group_df['Q'].max() 
+
+
+def compute_extreme_mean_flow(group_df, fun='min', n=7):
+    group_df = group_df.sort_index().copy()
+
+    def custom_nanmean(window, n):
+        # Check if the number of non-NaN values meets the min_periods requirement
+        valid_values = window #[~np.isnan(window)]
+        if len(valid_values) >= n:
+            return np.nanmean(window)
+        else:
+            return np.nan  # Return NaN if min_periods is not met
+
+    # Apply rolling mean
+    group_df[f'{fun}_Q_mean'] = (
+        group_df['Q']
+        .rolling(window=n, min_periods=1)
+        .apply(custom_nanmean, args=(n,))
+        .shift(-(n - 1))
+    )
+
+    # Find the extreme value
+    if fun == 'min':
+        idx = group_df[f'{fun}_Q_mean'].idxmin()
+    elif fun == 'max':
+        idx = group_df[f'{fun}_Q_mean'].idxmax()
+    else:
+        raise ValueError("fun must be 'min' or 'max'")
+
+    row = group_df.loc[[idx], ['time', f'{fun}_Q_mean']].copy()
+    row = row.rename(columns={
+        'time': f'{fun}_Q_mean_{n}d_start_time',
+        f'{fun}_Q_mean': f'{fun}_Q_mean_{n}d'
+    })
+
+    # Return a series
+    row = row.squeeze()
+    row.name = None
+    return row
+
+
+def compute_slope_fdc(group, lower_q=0.33, upper_q=0.66):
+    """Slope of the flow duration curve."""
+    if lower_q >= upper_q: 
+        raise ValueError
+    # qmean = group['Q'].mean() 
+    # qlower = group['Q'].quantile(lower_q) / qmean
+    # qupper = group['Q'].quantile(upper_q) / qmean
+    qlower = group['Q'].quantile(lower_q) #/ qmean
+    qupper = group['Q'].quantile(upper_q) #/ qmean
+
+    # Determine if the fdc has a slope at this tage and return the
+    # corresponding values
+    if qlower == 0 and qupper == 0:
+        return 0
+    else:
+        denominator = upper_q - lower_q
+        # if qupper == 0 and not qlower == 0:
+        #     # Negative slope [theoretically impossible?]
+        #     return -np.log(qlower) / denominator
+        if qupper > 0 and qlower == 0:
+            return np.log(qupper) / denominator
+        else:
+            return (np.log(qupper) - np.log(qlower)) / denominator
+
+
+def compute_bfi(group):
+    """Baseflow index."""
+    return group['Qb'].sum() / group['Q'].sum()
+
+
+def compute_dvia(group): 
+    q_avg = group['Q'].mean()         
+    group = group.set_index('time')
+    group_month = group['Q'].resample('MS').mean() 
+    group_avail = group['Q'].resample('MS').count() / group['Q'].resample('MS').size()
+    group_month = pd.DataFrame({'Q_mean': group_month, 'Q_month_avail': group_avail})
+    group_month = group_month.groupby(group_month.index.month)['Q_mean'].mean()
+    q_max = group_month.max()
+    q_min = group_month.min()
+    return (q_max - q_min) / q_avg
+
+
+def compute_dvic(group): 
+    q_avg = group['Q'].mean()         
+    group = group.set_index('time')
+    group_month = group['Q'].resample('MS').mean() 
+    q_05 = group_month.min()
+    q_95 = group_month.max()
+    return (q_95 - q_05) / q_avg 
 
 class _CV(BaseSummary): 
     def compute(self, by_year=False, rolling=None, center=False, safe=True): 
         data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
         duration = self._compute_duration(data)
-
-        def compute_cv(group): 
-            group = group.sort_index()
-            q_std = group['Q'].std()
-            q_mean = group['Q'].mean()
-            if q_mean == 0:
-                return np.nan 
-            return q_std / q_mean
 
         if safe: 
             compute_cv_safe = make_safe(compute_cv, name='CV')
@@ -82,23 +205,6 @@ class _FlowQuantile(BaseSummary):
     def compute(self, quantile, by_year=False, rolling=None, center=False, safe=True):
         data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
         duration = self._compute_duration(data)
-
-        def compute_quantile(group_df, q):
-            return group_df['Q'].quantile(q)
-
-        def compute_multi_quantile_safe(group_df, q, label):
-            try:
-                result = compute_quantile(group_df, q)
-                error = None
-            except Exception as e:
-                result, error = None, e
-
-            result.name = None
-            result.index = label
-            # result = result.to_frame().T 
-            result['error'] = error
-            return result 
-
         label = format_quantile(quantile)
         if safe: 
             if len(label) == 1:
@@ -118,12 +224,6 @@ class _Skewness(BaseSummary):
     def compute(self, by_year=False, rolling=None, center=False, safe=True):
         data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
         duration = self._compute_duration(data)
-
-        def compute_skew(group):
-            qmean = group['Q'].mean()
-            q50 = group['Q'].quantile(0.5)
-            return qmean / q50 if q50 > 0 else 0
-
         # result = data.groupby('group')[['Q']].apply(compute_skew).to_frame(name='Skew')
         if safe: 
             compute_skew_safe = make_safe(compute_skew, name='Skew')
@@ -133,19 +233,11 @@ class _Skewness(BaseSummary):
 
         return pd.merge(result, duration, left_index=True, right_index=True)
 
+
 class _RichardsBakerIndex(BaseSummary):
     def compute(self, by_year=False, rolling=None, center=False, safe=True): 
         data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
         duration = self._compute_duration(data)
-
-        def compute_rbi(group_df):
-            group_df = group_df.sort_index()
-            q_diff = group_df['Q'].diff().abs()
-            total_q = group_df['Q'].sum()
-            if total_q == 0 or np.isnan(total_q):
-                return np.nan
-            return q_diff.sum() / total_q
-
         if safe: 
             compute_rbi_safe = make_safe(compute_rbi, name='RBI')
             result = data.groupby('group').apply(compute_rbi_safe).apply(pd.Series)
@@ -155,13 +247,11 @@ class _RichardsBakerIndex(BaseSummary):
         # result = data.groupby('group').apply(compute_rbi).to_frame('RBI')
         return pd.merge(result, duration, left_index=True, right_index=True)
 
+
 class _MeanFlow(BaseSummary):
     def compute(self, by_year=False, rolling=None, center=False, safe=True): 
         data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
         duration = self._compute_duration(data)
-
-        def compute_mean(group_df):
-            return group_df['Q'].mean() 
 
         if safe: 
             compute_mean_safe = make_safe(compute_mean, name='QMEAN')
@@ -176,9 +266,6 @@ class _MaximumFlow(BaseSummary):
         data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
         duration = self._compute_duration(data)
         
-        def compute_max(group_df):
-            return group_df['Q'].max() 
-
         if safe: 
             compute_max_safe = make_safe(compute_max, name='QMAX')
             result = data.groupby('group').apply(compute_max_safe).apply(pd.Series)
@@ -192,44 +279,6 @@ class _NDayFlowExtreme(BaseSummary):
         data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
         duration = self._compute_duration(data)
 
-        def compute_extreme_mean_flow(group_df, fun='min', n=7):
-            group_df = group_df.sort_index().copy()
-
-            def custom_nanmean(window, n):
-                # Check if the number of non-NaN values meets the min_periods requirement
-                valid_values = window #[~np.isnan(window)]
-                if len(valid_values) >= n:
-                    return np.nanmean(window)
-                else:
-                    return np.nan  # Return NaN if min_periods is not met
-
-            # Apply rolling mean
-            group_df[f'{fun}_Q_mean'] = (
-                group_df['Q']
-                .rolling(window=n, min_periods=1)
-                .apply(custom_nanmean, args=(n,))
-                .shift(-(n - 1))
-            )
-
-            # Find the extreme value
-            if fun == 'min':
-                idx = group_df[f'{fun}_Q_mean'].idxmin()
-            elif fun == 'max':
-                idx = group_df[f'{fun}_Q_mean'].idxmax()
-            else:
-                raise ValueError("fun must be 'min' or 'max'")
-
-            row = group_df.loc[[idx], ['time', f'{fun}_Q_mean']].copy()
-            row = row.rename(columns={
-                'time': f'{fun}_Q_mean_{n}d_start_time',
-                f'{fun}_Q_mean': f'{fun}_Q_mean_{n}d'
-            })
-
-            # Return a series
-            row = row.squeeze()
-            row.name = None
-            return row
-
         if safe: 
             compute_extreme_mean_flow_safe = make_safe(compute_extreme_mean_flow, name='extreme_mean_flow')
             result = data.groupby('group').apply(compute_extreme_mean_flow_safe)
@@ -240,29 +289,6 @@ class _NDayFlowExtreme(BaseSummary):
 class _SFDC(BaseSummary):
     def compute(self, by_year=False, rolling=None, center=False, safe=True): 
         data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
-
-        def compute_slope_fdc(group, lower_q=0.33, upper_q=0.66):
-            if lower_q >= upper_q: 
-                raise ValueError
-            # qmean = group['Q'].mean() 
-            # qlower = group['Q'].quantile(lower_q) / qmean
-            # qupper = group['Q'].quantile(upper_q) / qmean
-            qlower = group['Q'].quantile(lower_q) #/ qmean
-            qupper = group['Q'].quantile(upper_q) #/ qmean
-
-            # Determine if the fdc has a slope at this tage and return the
-            # corresponding values
-            if qlower == 0 and qupper == 0:
-                return 0
-            else:
-                denominator = upper_q - lower_q
-                # if qupper == 0 and not qlower == 0:
-                #     # Negative slope [theoretically impossible?]
-                #     return -np.log(qlower) / denominator
-                if qupper > 0 and qlower == 0:
-                    return np.log(qupper) / denominator
-                else:
-                    return (np.log(qupper) - np.log(qlower)) / denominator
 
         if safe: 
             compute_slope_fdc_safe = make_safe(compute_slope_fdc, name='SFDC')
@@ -285,9 +311,6 @@ class BFI(BaseSummary):
         data['Qb'] = Qb
         data = self._get_grouped_data(data, by_year=by_year, rolling=rolling, center=center)
 
-        def compute_bfi(group):
-            return group['Qb'].sum() / group['Q'].sum()
-
         if safe: 
             compute_bfi_safe = make_safe(compute_bfi, name='BFI')
             result = data.groupby('group').apply(compute_bfi_safe).apply(pd.Series)
@@ -300,17 +323,6 @@ class _DVIa(BaseSummary):
     def compute(self, by_year=False, rolling=None, center=False, safe=True) -> float:
         data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
 
-        def compute_dvia(group): 
-            q_avg = group['Q'].mean()         
-            group = group.set_index('time')
-            group_month = group['Q'].resample('MS').mean() 
-            group_avail = group['Q'].resample('MS').count() / group['Q'].resample('MS').size()
-            group_month = pd.DataFrame({'Q_mean': group_month, 'Q_month_avail': group_avail})
-            group_month = group_month.groupby(group_month.index.month)['Q_mean'].mean()
-            q_max = group_month.max()
-            q_min = group_month.min()
-            return (q_max - q_min) / q_avg
-
         if safe: 
             compute_dvia_safe = make_safe(compute_dvia, name='DVIa')
             result = data.groupby('group').apply(compute_dvia_safe).apply(pd.Series)
@@ -321,14 +333,6 @@ class _DVIa(BaseSummary):
 class _DVIc(BaseSummary):
     def compute(self, by_year=False, rolling=None, center=False, safe=True) -> float:
         data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
-
-        def compute_dvic(group): 
-            q_avg = group['Q'].mean()         
-            group = group.set_index('time')
-            group_month = group['Q'].resample('MS').mean() 
-            q_05 = group_month.min()
-            q_95 = group_month.max()
-            return (q_95 - q_05) / q_avg 
 
         if safe: 
             compute_dvic_safe = make_safe(compute_dvic, name='DVIc')

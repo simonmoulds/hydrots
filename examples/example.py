@@ -18,12 +18,13 @@ id = 'AU00001'
 
 x = pd.read_csv(DATADIR / 'data' / f'{id}.csv')
 x = pd.read_csv('data/extra/valid_data/OHDB_GBR_NRFA_00011.csv')
+x = pd.read_csv('/Users/smoulds/projects/streamflow-data/results/OHDB_BOM__AUS_03586.csv')
 
-ts = hts.HydroTS(x, metadata=None)
+ts = hts.HydroTS(x, metadata=None, use_water_year=False)
 # ts.update_validity_criteria(start_year=1960, end_year=2020, min_tot_years=40, min_availability=0.9)
 # ts.update_water_year(use_water_year=False)
 ts.update_water_year(use_water_year=True, water_year_start=(7, 1))
-ts.update_validity_criteria(start_year=1950, end_year=2021, min_tot_years=20, min_availability=0.9)
+ts.update_validity_criteria(start_year=1950, end_year=2021, min_tot_years=20, min_availability=0.4)
 
 qmax = ts.summary.maximum_flow(by_year=False)['QMAX']
 ts.summary.no_flow_fraction(threshold=0.1)

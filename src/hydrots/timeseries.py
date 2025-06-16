@@ -110,6 +110,7 @@ class HydroTS:
         # Ensure time column is properly formatted
         data = data.dropna(subset='time')
         data['time'] = pd.to_datetime(data['time'])
+        data['time'] = data['time'].dt.tz_localize(tz=None)
         data = data.sort_values(by='time')
         
         # Make time the index
@@ -157,7 +158,7 @@ class HydroTS:
         """Enforce a continuous time series at the specified resolution."""
         start = data.index[0]
         end = data.index[-1]
-        full_range = pd.date_range(start=start, end=end, freq=freq)
+        full_range = pd.date_range(start=start, end=end, freq=freq, tz=None)
         data = data.reindex(full_range)
         data.index.name = 'time'
         return data
@@ -296,7 +297,10 @@ class HydroTS:
 
     @property 
     def n_years(self):
-        return len(self.valid_years)
+        if self.is_valid:    
+            return len(self.valid_years)
+        else:
+            return 0
 
     @property 
     def summary(self):
