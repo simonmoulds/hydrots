@@ -2,20 +2,23 @@
 import pandas as pd 
 import numpy as np
 
-from typing import Union
+from typing import Union, Optional
 
 class BaseSummary: 
 
-    def __init__(self, ts_or_df: Union["HydroTS", pd.DataFrame], discharge_col=None): 
+    def __init__(self, ts_or_df: Optional[Union["HydroTS", pd.DataFrame]]=None, discharge_col=None): 
         # if isinstance(ts_or_df, HydroTS):
-        if hasattr(ts_or_df, "valid_data"):  # Likely a HydroTS object
+        if ts_or_df is None: 
+            self.ts = None 
+            self.data = None 
+        elif hasattr(ts_or_df, "valid_data"):  # Likely a HydroTS object
             self.ts = ts_or_df
             self.data = ts_or_df.valid_data.copy()
         elif isinstance(ts_or_df, pd.DataFrame):
             self.ts = None
             self.data = ts_or_df.copy()
         else:
-            raise TypeError("Input must be a HydroTS object or a pandas DataFrame.")
+            raise TypeError("Input must be a HydroTS object or a pandas DataFrame or None.")
 
     def _compute_duration(self, data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -38,7 +41,7 @@ class BaseSummary:
             .agg(summary_period_duration=lambda x: x.max() - x.min() + ((x.iloc[1] - x.iloc[0]) if len(x) > 1 else pd.Timedelta(0))) # FIXME should be able to get time resolution from HydroTS object
         )
 
-    def _get_grouped_data(self, data, by_year=False, rolling=None, center=False):
+    def _get_grouped_data(self, data, by_year=False, rolling=None, center=False, by_season=False, by_month=False):
 
         # FIXME this will return an error if there are no valid years
         years = sorted(self.ts.valid_years)
@@ -67,13 +70,53 @@ class BaseSummary:
 
             return pd.concat(group_datas, ignore_index=True)
 
+        elif by_season: 
+            def assign_season_label(date):
+                year = date.year
+                month = date.month
+
+                if month in [3, 4, 5]:
+                    season = 'MAM'
+                elif month in [6, 7, 8]:
+                    season = 'JJA'
+                elif month in [9, 10, 11]:
+                    season = 'SON'
+                else:
+                    season = 'DJF'
+                    if month == 12:
+                        year = year  # December: use current year
+                    else:
+                        year -= 1    # Jan/Feb: season year is previous December's year
+                return f"{year}-{season}"
+
+            data['group'] = data['time'].apply(assign_season_label)
+
+        elif by_month: 
+            def assign_yearmon_label(date): 
+                year = date.year 
+                month = date.month 
+                return f"{year}-{month:02d}"
+            
+            data['group'] = data['time'].apply(assign_yearmon_label)
+
         else:
             data['group'] = f'{years[0]}-{years[-1]}'
             return data
 
-    def compute(self): 
+    def _compute(self, data, **kwargs): 
         raise NotImplementedError
 
+    def compute(self, by_year=False, rolling=None, center=False, include_duration=True, **kwargs):
+        if self.data is None:
+            raise ValueError("No data was provided. You must supply data at initialization or call _compute directly.")
+
+        data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
+        duration = self._compute_duration(data)
+        result = self._compute(data, **kwargs)
+        if include_duration:
+            return pd.merge(result, duration, left_index=True, right_index=True)
+        else:
+            return result 
 
 class EventBasedSummary(BaseSummary): 
     def _compute_mean_deficit(self, events): 
@@ -171,3 +214,14 @@ class EventBasedSummary(BaseSummary):
         result['mean_event_duration_days'] = result.apply(get_mean_event_duration_days, axis=1)
 
         return result
+
+    def _compute(self, **kwargs): 
+        raise NotImplementedError 
+
+    def compute(self, summarise=False, by_year=False, rolling=None, center=False, **kwargs):
+        events = self._compute(**kwargs)
+        if summarise:
+            summary = self._summarize_events(events, by_year=by_year, rolling=rolling, center=center)
+            return events, summary
+        else:
+            return events

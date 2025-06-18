@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import warnings
 
+from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, List, Union
 
@@ -35,6 +36,19 @@ def is_regular(times: pd.Series) -> bool:
     is_multiple = diffs.apply(lambda x: x / most_common_diff).apply(lambda x: x.is_integer())
     return is_multiple.all()
 
+
+def read_timeseries(path: Union[str, Path], **kwargs) -> pd.DataFrame:
+    path = Path(path)
+    if path.suffix == ".csv":
+        return pd.read_csv(path, **kwargs)
+    elif path.suffix == ".parquet":
+        return pd.read_parquet(path, **kwargs)
+    elif path.suffix in [".xls", ".xlsx"]:
+        return pd.read_excel(path, **kwargs)
+    else:
+        raise ValueError(f"Unsupported file extension: {path.suffix}")
+
+
 class HydroTS: 
 
     TIME_COLUMN = 'time'
@@ -47,25 +61,26 @@ class HydroTS:
     }
 
     def __init__(self, 
-                 data: pd.DataFrame, 
+                 data: Union[str, Path, pd.DataFrame],
                  metadata: pd.DataFrame,
-                #  freq: Optional[Union[pd.Timedelta, str]] = None,
                  use_water_year: bool = True,
                  use_local_water_year: bool = True, 
-                 wettest: bool = True):
+                 wettest: bool = True, 
+                 **kwargs):
+
+        if isinstance(data, (str, Path)): 
+            data = read_timeseries(data, **kwargs)
+        elif not isinstance(data, pd.DataFrame):
+            raise TypeError("Expected `data` to be a Pandas DataFrame or file path")
+        
+        if data.shape[0] <= 1:
+            raise ValueError("The input data must contain more than one row to be treated as a time series.")
 
         self.data = self._format_data(data, use_water_year, use_local_water_year, wettest=wettest)
-
-        # # TODO how should irregular timeseries be handled?
-        # if freq:
-        #     self.freq = pd.Timedelta(freq)
-        # else:
-        #     self.freq = freq
-
         self.metadata = self._format_metadata(metadata)
-
+        
         # TODO change type of validator depending on application
-        self.validator = TSValidator(self.data, self.data_columns) #, self.freq)
+        self.validator = TSValidator(self.data, self.data_columns)
 
     def update_validity_criteria(self, **kwargs): 
         # self.validator.update_criteria(**kwargs)

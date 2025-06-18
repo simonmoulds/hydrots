@@ -18,30 +18,12 @@ COMMON_KWARGS_DOC = """
         Whether to center the rolling window.
 """
 
+
 def format_quantile(quantile: Union[float, list]) -> str:
     if isinstance(quantile, float): 
         quantile = [quantile]
     quantile_int = [int(round(q * 100)) for q in quantile]
     return [f"Q{q_int:02d}" for q_int in quantile_int]
-
-def make_safe(func, name=None):
-    """Wraps a function to return {'<name>': result, 'error': error}.
-    """
-    metric_name = name or func.__name__
-    def safe_func(*args, **kwargs):
-        try:
-            result = func(*args, **kwargs)
-            error = None
-        except Exception as e:
-            result, error = None, e
-
-        if isinstance(result, (pd.Series, pd.DataFrame)): 
-            result['error'] = error
-            return result 
-        else:
-            return {metric_name: result, 'error': error}
-    
-    return safe_func
 
 
 def compute_cv(group): 
@@ -54,24 +36,72 @@ def compute_cv(group):
     return q_std / q_mean
 
 
-def compute_quantile(group_df, q):
+def compute_quantile(group, q):
     """Flow quantile."""
-    return group_df['Q'].quantile(q)
+    return group['Q'].quantile(q)
 
 
-def compute_multi_quantile_safe(group_df, q, label):
-    """Calculate multiple flow quantiles at once."""
-    try:
-        result = compute_quantile(group_df, q)
-        error = None
-    except Exception as e:
-        result, error = None, e
+def compute_mean(group):
+    return group['Q'].mean() 
 
-    result.name = None
-    result.index = label
-    # result = result.to_frame().T 
-    result['error'] = error
-    return result 
+
+def compute_max(group):
+    return group['Q'].max() 
+
+
+def compute_min(group):
+    return group['Q'].min() 
+
+
+def compute_std(group): 
+    return group['Q'].std()
+
+
+def compute_iqr(group): 
+    Q1 = group['Q'].quantile(0.25)
+    Q3 = group['Q'].quantile(0.75)
+    return Q3 - Q1
+
+
+def compute_center_timing(group): 
+    cum_flow = group['Q'].cumsum()
+    total_flow = cum_flow.max()
+    if total_flow == 0:
+        return None  # Cannot compute for zero flow
+
+    # Find the first date where cumulative flow >= 50% of total
+    half_total = 0.5 * total_flow
+    doy_50 = cum_flow[cum_flow >= half_total].index[0].dayofyear
+    return doy_50
+
+
+def compute_doymin(group): 
+    return group['Q'].idxmin().dayofyear 
+
+
+def compute_doymax(group): 
+    return group['Q'].idxmax().dayofyear 
+
+
+def compute_gini_coefficient(group):
+    """
+    Calculate the Gini coefficient of streamflow inequality within a group.
+    
+    Parameters:
+    group (pd.DataFrame): Must contain a 'Q' column representing streamflow.
+    
+    Returns:
+    float: Gini coefficient (between 0 and 1), or np.nan if not computable.
+    """
+    q = group['Q'].dropna()
+    if len(q) == 0 or q.sum() == 0:
+        return np.nan  # Avoid division by zero or empty group
+
+    q_norm = q / q.sum()
+    q_sorted = np.sort(q_norm)
+    n = len(q_sorted)
+    gini = (2 * np.sum(np.arange(1, n + 1) * q_sorted) - (n + 1)) / n
+    return gini
 
 
 def compute_skew(group):
@@ -80,27 +110,18 @@ def compute_skew(group):
     return qmean / q50 if q50 > 0 else 0
 
 
-def compute_rbi(group_df):
+def compute_rbi(group):
     """Richards-Baker Index."""
-    group_df = group_df.sort_index()
-    q_diff = group_df['Q'].diff().abs()
-    total_q = group_df['Q'].sum()
+    group = group.sort_index()
+    q_diff = group['Q'].diff().abs()
+    total_q = group['Q'].sum()
     if total_q == 0 or np.isnan(total_q):
         return np.nan
     return q_diff.sum() / total_q
 
 
-def compute_mean(group_df):
-    return group_df['Q'].mean() 
-
-
-def compute_max(group_df):
-    return group_df['Q'].max() 
-
-
-def compute_extreme_mean_flow(group_df, fun='min', n=7):
-    group_df = group_df.sort_index().copy()
-
+def compute_extreme_mean_flow(group, n=7, fun='min'):
+    group = group.sort_index().copy()
     def custom_nanmean(window, n):
         # Check if the number of non-NaN values meets the min_periods requirement
         valid_values = window #[~np.isnan(window)]
@@ -110,28 +131,28 @@ def compute_extreme_mean_flow(group_df, fun='min', n=7):
             return np.nan  # Return NaN if min_periods is not met
 
     # Apply rolling mean
-    group_df[f'{fun}_Q_mean'] = (
-        group_df['Q']
+    group['QMEAN'] = (
+        group['Q']
         .rolling(window=n, min_periods=1)
         .apply(custom_nanmean, args=(n,))
         .shift(-(n - 1))
     )
 
     # Find the extreme value
+    if all(group['QMEAN'].isna()): 
+        return pd.Series({f'{fun.upper()}{n}_TIME': pd.NaT, f'{fun.upper()}{n}': pd.NA}, name=None)
+
     if fun == 'min':
-        idx = group_df[f'{fun}_Q_mean'].idxmin()
+        idx = group['QMEAN'].idxmin()
     elif fun == 'max':
-        idx = group_df[f'{fun}_Q_mean'].idxmax()
+        idx = group['QMEAN'].idxmax()
     else:
         raise ValueError("fun must be 'min' or 'max'")
 
-    row = group_df.loc[[idx], ['time', f'{fun}_Q_mean']].copy()
-    row = row.rename(columns={
-        'time': f'{fun}_Q_mean_{n}d_start_time',
-        f'{fun}_Q_mean': f'{fun}_Q_mean_{n}d'
-    })
-
+    row = group.loc[[idx], ['QMEAN']].copy()
+    row = row.reset_index(drop=False)
     # Return a series
+    row = row.rename(columns={'time': f'{fun.upper()}{n}_TIME', 'QMEAN': f'{fun.upper()}{n}'})
     row = row.squeeze()
     row.name = None
     return row
@@ -187,120 +208,143 @@ def compute_dvic(group):
     q_95 = group_month.max()
     return (q_95 - q_05) / q_avg 
 
-class _CV(BaseSummary): 
-    def compute(self, by_year=False, rolling=None, center=False, safe=True): 
-        data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
+
+class _GSIM(BaseSummary): 
+
+    def compute(self, annual=True, seasonal=False, monthly=False):
+        data = self._get_grouped_data(self.data, by_year=True, rolling=False)
         duration = self._compute_duration(data)
 
-        if safe: 
-            compute_cv_safe = make_safe(compute_cv, name='CV')
-            result = data.groupby('group').apply(compute_cv_safe).apply(pd.Series)
-        else:
-            result = data.groupby('group').apply(compute_cv).to_frame(name='CV')
+        group = data.groupby('group')
 
+        # Basic statistics
+        indices = {
+            'MEAN': _MeanFlow()._compute(data),
+            'SD': _STDFlow()._compute(data),
+            'IQR': _IQRFlow()._compute(data),
+            'MIN': _MinimumFlow()._compute(data),
+            'MAX': _MaximumFlow()._compute(data)
+        }
+
+        # Extreme 7-day flows
+        min7 = _NDayFlowExtreme()._compute(data, n=7, fun='min')
+        max7 = _NDayFlowExtreme()._compute(data, n=7, fun='max')
+
+        indices.update({
+            'MIN7': min7[['MIN7']],
+            'MAX7': max7[['MAX7']],
+        })
+
+        # Only add quantiles for annual and seasonal values
+        if annual or seasonal:
+            quantiles = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+            indices['QUANTILES'] = _FlowQuantile()._compute(data, quantile=quantiles)
+
+        # Other indices computed only for annual summaries
+        if annual:
+            indices.update({
+                'CT': _CenterTiming()._compute(data),
+                'DOYMIN': _MinimumFlowDOY()._compute(data), 
+                'DOYMAX': _MaximumFlowDOY()._compute(data),
+                'DOYMIN7': min7['MIN7_TIME'].dt.dayofyear.to_frame(name='DOYMIN7'),
+                'DOYMAX7': max7['MAX7_TIME'].dt.dayofyear.to_frame(name='DOYMAX7'),
+                'GINI': _GiniCoefficient()._compute(data)
+            })
+
+        result = pd.concat(indices.values(), axis=1)
         return pd.merge(result, duration, left_index=True, right_index=True)
 
-class _FlowQuantile(BaseSummary): 
 
-    def compute(self, quantile, by_year=False, rolling=None, center=False, safe=True):
-        data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
-        duration = self._compute_duration(data)
+# class _CAMELS(BaseSummary): 
+#     def compute(self): 
+#         data = self._get_grouped_data(self.data, by_year=False)
+#         duration = self._compute_duration(data)
+
+#         group = data.groupby('group')
+
+#         indices = {}
+#         indices['MEAN'] = group.apply(compute_mean).to_frame(name='MEAN')
+#         indices['SFDC'] = group.apply(compute_slope_fdc).to_frame(name='SFDC')
+#         indices['BFI'] = group.apply(compute_bfi).to_frame(name='BFI')
+#         indices['Q5'] = group.apply(compute_quantile, q=[0.05]).to_frame(name='Q5')
+#         indices['Q95'] = group.apply(compute_quantile, q=[0.95]).to_frame(name='Q95')
+#         indices['HIGH_Q_FREQ']
+#         indices['HIGH_Q_DUR']
+#         indices['LOW_Q_FREQ']
+#         indices['LOW_Q_DUR']
+#         indices['ZERO_Q_FREQ']
+
+
+class _CV(BaseSummary): 
+    def _compute(self, data):
+        return data.groupby('group').apply(compute_cv).to_frame(name='CV')
+
+class _FlowQuantile(BaseSummary): 
+    def _compute(self, data, quantile): 
         label = format_quantile(quantile)
-        if safe: 
-            if len(label) == 1:
-                label = label[0]
-                compute_quantile_safe = make_safe(compute_quantile, name=label)
-                result = data.groupby('group').apply(compute_quantile_safe, q=quantile).apply(pd.Series)
-            else:
-                result = data.groupby('group').apply(compute_multi_quantile_safe, q=quantile, label=label)
+        if len(label) == 1:
+            label = label[0]
+            result = data.groupby('group').apply(compute_quantile, q=quantile).apply(pd.Series)
         else:
             result = data.groupby('group').apply(compute_quantile, q=quantile)
             result.columns = label
-            
-        return pd.merge(result, duration, left_index=True, right_index=True)
-
+        return result 
 
 class _Skewness(BaseSummary):
-    def compute(self, by_year=False, rolling=None, center=False, safe=True):
-        data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
-        duration = self._compute_duration(data)
-        # result = data.groupby('group')[['Q']].apply(compute_skew).to_frame(name='Skew')
-        if safe: 
-            compute_skew_safe = make_safe(compute_skew, name='Skew')
-            result = data.groupby('group').apply(compute_skew_safe).apply(pd.Series)
-        else:
-            result = data.groupby('group').apply(compute_skew).to_frame(name='Skew')
-
-        return pd.merge(result, duration, left_index=True, right_index=True)
-
+    def _compute(self, data): 
+        return data.groupby('group').apply(compute_skew).to_frame(name='Skew')
 
 class _RichardsBakerIndex(BaseSummary):
-    def compute(self, by_year=False, rolling=None, center=False, safe=True): 
-        data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
-        duration = self._compute_duration(data)
-        if safe: 
-            compute_rbi_safe = make_safe(compute_rbi, name='RBI')
-            result = data.groupby('group').apply(compute_rbi_safe).apply(pd.Series)
-        else:
-            result = data.groupby('group').apply(compute_rbi).to_frame(name='RBI')
-
-        # result = data.groupby('group').apply(compute_rbi).to_frame('RBI')
-        return pd.merge(result, duration, left_index=True, right_index=True)
-
+    def _compute(self, data):  
+        return data.groupby('group').apply(compute_rbi).to_frame(name='RBI')
 
 class _MeanFlow(BaseSummary):
-    def compute(self, by_year=False, rolling=None, center=False, safe=True): 
-        data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
-        duration = self._compute_duration(data)
-
-        if safe: 
-            compute_mean_safe = make_safe(compute_mean, name='QMEAN')
-            result = data.groupby('group').apply(compute_mean_safe).apply(pd.Series)
-        else:
-            result = data.groupby('group')['Q'].mean().to_frame(name='QMEAN')
-
-        return pd.merge(result, duration, left_index=True, right_index=True)
+    def _compute(self, data):  
+        return data.groupby('group')['Q'].mean().to_frame(name='QMEAN')
 
 class _MaximumFlow(BaseSummary):
-    def compute(self, by_year=False, rolling=None, center=False, safe=True): 
-        data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
-        duration = self._compute_duration(data)
-        
-        if safe: 
-            compute_max_safe = make_safe(compute_max, name='QMAX')
-            result = data.groupby('group').apply(compute_max_safe).apply(pd.Series)
-        else:
-            result = data.groupby('group')['Q'].max().to_frame(name='QMAX')
+    def _compute(self, data):
+        return data.groupby('group')['Q'].max().to_frame(name='QMAX')
 
-        return pd.merge(result, duration, left_index=True, right_index=True)
+class _MinimumFlow(BaseSummary):
+    def _compute(self, data):
+        return data.groupby('group')['Q'].min().to_frame(name='QMIN')
+
+class _MinimumFlowDOY(BaseSummary): 
+    def _compute(self, data): 
+        return data.groupby('group').apply(compute_doymin).to_frame(name='DOYMIN')
+
+class _MaximumFlowDOY(BaseSummary): 
+    def _compute(self, data): 
+        return data.groupby('group').apply(compute_doymax).to_frame(name='DOYMAX')
+
+class _GiniCoefficient(BaseSummary): 
+    def _compute(self, data): 
+        return data.groupby('group').apply(compute_gini_coefficient).to_frame(name='GINI')
+
+class _STDFlow(BaseSummary): 
+    def _compute(self, data): 
+        return data.groupby('group').apply(compute_std).to_frame(name='STD')
+
+class _IQRFlow(BaseSummary): 
+    def _compute(self, data): 
+        return data.groupby('group').apply(compute_iqr).to_frame(name='IQR')
 
 class _NDayFlowExtreme(BaseSummary):
-    def compute(self, n: int = 7, fun: str = 'min', by_year=False, rolling=None, center=False, safe=True) -> pd.DataFrame:
-        data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
-        duration = self._compute_duration(data)
+    def _compute(self, data, n: int = 7, fun: str = 'min'):
+        return data.groupby('group').apply(compute_extreme_mean_flow, n=n, fun=fun)
 
-        if safe: 
-            compute_extreme_mean_flow_safe = make_safe(compute_extreme_mean_flow, name='extreme_mean_flow')
-            result = data.groupby('group').apply(compute_extreme_mean_flow_safe)
-        else:
-            result = data.groupby('group').apply(compute_extreme_mean_flow)
-        return pd.merge(result, duration, left_index=True, right_index=True)
+class _CenterTiming(BaseSummary): 
+    def _compute(self, data):
+        return data.groupby('group').apply(compute_center_timing).to_frame(name='CT')
 
 class _SFDC(BaseSummary):
-    def compute(self, by_year=False, rolling=None, center=False, safe=True): 
-        data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
-
-        if safe: 
-            compute_slope_fdc_safe = make_safe(compute_slope_fdc, name='SFDC')
-            result = data.groupby('group').apply(compute_slope_fdc_safe).apply(pd.Series)
-        else:
-            result = data.groupby('group').apply(compute_slope_fdc).to_frame(name='SFDC')
-
-        return result
+    def _compute(self, data):
+        return data.groupby('group').apply(compute_slope_fdc).to_frame(name='SFDC')
 
 class BFI(BaseSummary):
-    def compute(self, method='LH', by_year=False, rolling=None, center=False, safe=True): 
-        data = self.data.copy()
+    def _compute(self, data, method='LH'):
+        data = data.copy()
         data = data.dropna(subset='Q')
         Q = data['Q'].values
         if method.upper() == 'LH': 
@@ -309,93 +353,44 @@ class BFI(BaseSummary):
             raise ValueError(f'Baseflow separation method {method} not recognised')
 
         data['Qb'] = Qb
-        data = self._get_grouped_data(data, by_year=by_year, rolling=rolling, center=center)
-
-        if safe: 
-            compute_bfi_safe = make_safe(compute_bfi, name='BFI')
-            result = data.groupby('group').apply(compute_bfi_safe).apply(pd.Series)
-        else:
-            result = data.groupby('group').apply(compute_bfi).to_frame(name='BFI')
-
-        return result
+        result = data.groupby('group').apply(compute_bfi).to_frame(name='BFI')
+        return result 
 
 class _DVIa(BaseSummary): 
-    def compute(self, by_year=False, rolling=None, center=False, safe=True) -> float:
-        data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
-
-        if safe: 
-            compute_dvia_safe = make_safe(compute_dvia, name='DVIa')
-            result = data.groupby('group').apply(compute_dvia_safe).apply(pd.Series)
-        else:
-            result = data.groupby('group').apply(compute_dvia).to_frame(name='DVIa')
-        return result
+    def _compute(self, data): 
+        result = data.groupby('group').apply(compute_dvia).to_frame(name='DVIa')
+        return result 
 
 class _DVIc(BaseSummary):
-    def compute(self, by_year=False, rolling=None, center=False, safe=True) -> float:
-        data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
+    def _compute(self, data):
+        return data.groupby('group').apply(compute_dvic).to_frame(name='DVIc')
 
-        if safe: 
-            compute_dvic_safe = make_safe(compute_dvic, name='DVIc')
-            result = data.groupby('group').apply(compute_dvic_safe).apply(pd.Series)
-        else:
-            result = data.groupby('group').apply(compute_dvic).to_frame(name='DVIc')
-        return result
+def pot(vals, threshold): 
+    return np.where(vals > threshold)[0] 
+
+def lowflow(vals, threshold): 
+    return np.where(vals < threshold)[0]
+
+def highflow(value, threshold):
+    return np.where(value > threshold)[0] #9 * median)[0]
 
 class _POT(EventBasedSummary):
+    def _compute(self, threshold: float, min_diff: int = 24) #, summarise=False, by_year=False, rolling=None, center=False):
+        return self._flow_events(pot, min_diff, threshold=threshold)
 
-    def compute(self, threshold: float, min_diff: int = 24, summarise=False, by_year=False, rolling=None, center=False):
-
-        def pot(vals, threshold): 
-            return np.where(vals > threshold)[0] 
-
-        # Get individual events
-        events = self._flow_events(pot, min_diff, threshold=threshold)
-
-        # Get number of events per summary period
-        if summarise:
-            summary = self._summarize_events(events, by_year=by_year, rolling=rolling, center=center)
-            return events, summary
-        else:
-            return events
 
 class _LowFlowEvents(EventBasedSummary):
+    def _compute(self, threshold, min_diff: int = 24):
+        return self._flow_events(lowflow, min_diff, threshold=threshold)
 
-    def compute(self, threshold, min_diff: int = 24, summarise=False, by_year=False, rolling=None, center=False): 
-
-        def lowflow(vals, threshold): 
-            # return np.where(vals < 0.2 * mean)[0]
-            return np.where(vals < threshold)[0]
-
-        # Individual events 
-        events = self._flow_events(lowflow, min_diff, threshold=threshold)
-
-        # Get number of events per summary period
-        if summarise:
-            summary = self._summarize_events(events, by_year=by_year, rolling=rolling, center=center)
-            return events, summary
-        else:
-            return events
 
 class _HighFlowEvents(EventBasedSummary): 
+    def _compute(self, threshold, min_diff: int = 24): #, summarise=False, by_year=False, rolling=None, center=False): 
+        return self._flow_events(highflow, min_diff, threshold=threshold)
 
-    def compute(self, threshold, min_diff: int = 24, summarise=False, by_year=False, rolling=None, center=False): 
-
-        def highflow(value, threshold):
-            return np.where(value > threshold)[0] #9 * median)[0]
-
-        median = self.data['Q'].median()
-        events = self._flow_events(highflow, threshold=median)
-
-        # Get number of events per summary period
-        if summarise:
-            summary = self._summarize_events(events, by_year=by_year, rolling=rolling, center=center)
-            return events, summary
-        else:
-            return events
 
 class _NoFlowEvents(EventBasedSummary): 
-
-    def compute(self, threshold: float = 0.001, summarise: bool = False, by_year: bool = False, rolling: Optional[bool] = None, center: bool = False): 
+    def _compute(self, threshold: float = 0.001):
         data = self.data.copy()
         data['noflow'] = np.where(data['Q'] <= threshold, 1, 0)
         rle_no_flow = [(k, len(list(v))) for k, v in itertools.groupby(data['noflow'])]
@@ -412,11 +407,29 @@ class _NoFlowEvents(EventBasedSummary):
         if events.shape[0] == 0:
             events = None 
 
-        if summarise:
-            summary = self._summarize_events(events, by_year=by_year, rolling=rolling, center=center)
-            return events, summary
-        else:
-            return events
+        return events 
+    # def compute(self, threshold: float = 0.001, summarise: bool = False, by_year: bool = False, rolling: Optional[bool] = None, center: bool = False): 
+    #     data = self.data.copy()
+    #     data['noflow'] = np.where(data['Q'] <= threshold, 1, 0)
+    #     rle_no_flow = [(k, len(list(v))) for k, v in itertools.groupby(data['noflow'])]
+    #     event_ids = [[i] * grp[1] for i, grp in enumerate(rle_no_flow)]
+    #     event_ids = list(itertools.chain.from_iterable(event_ids))
+    #     data['event_id'] = event_ids
+    #     data = data.reset_index()
+    #     events = data[data['noflow'] == 1].groupby('event_id').agg(
+    #         water_year=('water_year', 'min'), # Take the water year of the event start
+    #         event_start_time=('time', 'min'),
+    #         event_end_time=('time', 'max'),
+    #         event_duration=('time', lambda x: (x.max() - x.min())) #).days + 1)
+    #     )
+    #     if events.shape[0] == 0:
+    #         events = None 
+
+    #     if summarise:
+    #         summary = self._summarize_events(events, by_year=by_year, rolling=rolling, center=center)
+    #         return events, summary
+    #     else:
+    #         return events
 
 class _DryDownPeriod(EventBasedSummary): 
     
@@ -454,16 +467,16 @@ class _DryDownPeriod(EventBasedSummary):
         result['mean_event_duration_days'] = result.apply(get_mean_event_duration_days, axis=1)
         return result
 
-    def compute(self, quantile: float = 0.25, summarise=False, by_year=False, rolling=None, center=False) -> float: 
+    def _compute(self, quantile: float = 0.25): #, summarise=False, by_year=False, rolling=None, center=False) -> float: 
 
         threshold = self.data['Q'].quantile(quantile)
         if threshold == 0.:
-            return None if not summarise else (None, None)
+            return None #if not summarise else (None, None)
 
         pot_events = _POT(self.ts).compute(threshold=threshold)
         noflow_events = _NoFlowEvents(self.ts).compute(threshold=0.)
         if noflow_events is None or pot_events is None:
-            return None if not summarise else (None, None)
+            return None #if not summarise else (None, None)
 
         high_flow_end_times = pot_events['event_end_time'].values
         noflow_start_times = noflow_events['event_start_time'].values
@@ -484,16 +497,22 @@ class _DryDownPeriod(EventBasedSummary):
                 dry_down_events.append(pd.DataFrame({'water_year': [water_year], 'event_start_time': [most_recent_high_end], 'event_end_time': [n], 'event_duration': [dry_down_period]}))
 
         if len(dry_down_events) == 0: 
-            return None if not summarise else (None, None)
+            return None #if not summarise else (None, None)
 
         dry_down_events = pd.concat(dry_down_events, axis=0).reset_index(drop=True)
         dry_down_events = dry_down_events.drop_duplicates(subset='event_start_time')
+        return dry_down_events
+
+    def compute(self, summarise=False, by_year=False, rolling=None, center=False, **kwargs):
+        events = self._compute(**kwargs)
+        if not events: 
+            return None if not summarise else (None, None)
 
         if summarise:
-            summary = self._summarize_events(dry_down_events, by_year=by_year, rolling=rolling, center=center)
-            return dry_down_events, summary
+            summary = self._summarize_events(events, by_year=by_year, rolling=rolling, center=center)
+            return events, summary
         else:
-            return dry_down_events
+            return events
 
 
 class _NoFlowFraction(EventBasedSummary): 
@@ -503,14 +522,10 @@ class _NoFlowFraction(EventBasedSummary):
 
         data = self._simple_flow_events(noflow, threshold=threshold)
         data = self._get_grouped_data(data, by_year=by_year, rolling=rolling, center=center)
-        # duration = self._compute_duration(data)
-        # result = data.groupby('group')['event_duration'].sum().to_frame(name='event_duration')
         result = data.groupby('group').agg(
             event_duration=('event_duration', 'sum'),
-            # summary_period_duration=('event_duration', lambda x: sum(~np.isnan(x)))
             summary_period_duration=('timestep', 'sum')
         )
-        # result = pd.merge(result, duration, left_index=True, right_index=True)
         result['noflow_fraction'] = result['event_duration'] / result['summary_period_duration']
         return result[['noflow_fraction']]
 
@@ -537,7 +552,6 @@ class _HighFlowFraction(EventBasedSummary):
             result_list = []
             for threshold_name, threshold_value in threshold.items():
                 result = compute_high_flow_fraction(threshold_value)
-                # result.columns = [threshold_name + '_' + column for column in result.columns]
                 result_list.append(result)
             result = pd.concat(result_list, axis=0, keys=threshold.keys(), names=('threshold', 'group'))
         else:
@@ -570,11 +584,24 @@ class _LowFlowFraction(EventBasedSummary):
             result = compute_low_flow_fraction(threshold)
         return result[['lowflow_fraction', 'event_duration']]
 
+
 summary_method_registry = {}
 
 def register_summary_method(func):
     summary_method_registry[func.__name__] = func
     return func
+
+@register_summary_method 
+def gsim_annual(ts_or_df): 
+    return _GSIM(ts_or_df).compute(annual=True)
+
+@register_summary_method 
+def gsim_seasonal(ts_or_df): 
+    return _GSIM(ts_or_df).compute(seasonal=True)
+
+@register_summary_method 
+def gsim_monthly(ts_or_df): 
+    return _GSIM(ts_or_df).compute(monthly=True)
 
 @register_summary_method
 def richards_baker_index(ts_or_df, **kwargs): 
@@ -587,6 +614,10 @@ def flow_quantile(ts_or_df, **kwargs):
 @register_summary_method
 def maximum_flow(ts_or_df, **kwargs):
     return _MaximumFlow(ts_or_df).compute(**kwargs)
+
+@register_summary_method
+def maximum_flow(ts_or_df, **kwargs):
+    return _MinimumFlow(ts_or_df).compute(**kwargs)
 
 @register_summary_method
 def mean_flow(ts_or_df, **kwargs):
