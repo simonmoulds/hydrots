@@ -1,4 +1,5 @@
 
+import calendar
 import numpy as np
 import pandas as pd
 import importlib
@@ -17,59 +18,31 @@ id = 'GB00055' # Lambourn at Shaw
 id = 'AU00001'
 
 x = pd.read_csv(DATADIR / 'data' / f'{id}.csv')
-x = pd.read_csv('data/extra/valid_data/OHDB_GBR_NRFA_00011.csv')
-x = pd.read_csv('/Users/smoulds/projects/streamflow-data/results/OHDB_BOM__AUS_03586.csv')
-x = pd.read_csv('/Users/smoulds/projects/streamflow-data/results/OHDB_WRIS_IND_00414.csv')
+# x = pd.read_csv('data/extra/valid_data/OHDB_GBR_NRFA_00011.csv')
+# x = pd.read_csv('/Users/smoulds/projects/streamflow-data/results/OHDB_BOM__AUS_03586.csv')
+x = pd.read_csv('/Users/smoulds/dev/hydrots/data/extra/timeseries/OHDB_ARSO_SVN_00010.csv')
+# x = pd.read_csv('/Users/smoulds/projects/streamflow-data/results/OHDB_WRIS_IND_00414.csv')
+
 
 ts = hts.HydroTS(x, metadata=None, use_water_year=False)
 # ts.update_validity_criteria(start_year=1960, end_year=2020, min_tot_years=40, min_availability=0.9)
 # ts.update_water_year(use_water_year=False)
 ts.update_water_year(use_water_year=True, water_year_start=(7, 1))
-ts.update_validity_criteria(start_year=1995, end_year=2000, min_tot_years=20, min_availability=0.4)
+ts.update_validity_criteria(start_year=1984, end_year=2025, min_tot_years=5, min_availability=0.4)
 
-qmax = ts.summary.maximum_flow(by_year=False)['QMAX']
-ts.summary.no_flow_fraction(threshold=0.1)
-events, res = ts.summary.dry_down_period(summarise=True)
+# Availability attributes: 
+ts.n_valid_years
+ts.max_consecutive_valid_years 
+ts.valid_years_mean_availability 
+x = ts.valid_years_mean_monthly_availability
+# df = pd.DataFrame([x.values], columns=[calendar.month_abbr[m] for m in x.index])
 
-# TESTING DRY DOWN PERIOD 
-import hydrots.summary.summary as hsm
-importlib.reload(hsm)
-threshold = ts.valid_data['Q'].quantile(0.25)
-pot_events = hsm._POT(ts).compute(threshold=threshold)
-noflow_events = hsm._NoFlowEvents(ts).compute(threshold=0.)
-high_flow_end_times = pot_events['event_end_time'].values
-noflow_start_times = noflow_events['event_start_time'].values
-dry_down_events = []
-j = 0  # pointer for noflow_start_dates
-
-for n in noflow_start_times:
-    # Advance j to find the last high flow before n
-    while j < len(high_flow_end_times) and high_flow_end_times[j] < n:
-        j += 1
-    if j == 0:
-        continue  # no high-flow end before this no-flow start
-    else:
-        most_recent_high_end = high_flow_end_times[j - 1]
-        # Need to do this because the water year in the pot_events dataframe corresponds to the start of the event, not the end
-        water_year = ts.valid_data.loc[most_recent_high_end, 'water_year']
-        dry_down_period = (n - most_recent_high_end).astype("timedelta64[D]").item()
-        dry_down_events.append(pd.DataFrame({'water_year': [water_year], 'event_start_time': [most_recent_high_end], 'event_end_time': [n], 'event_duration': [dry_down_period]}))
-
-dry_down_events = pd.concat(dry_down_events, axis=0).reset_index(drop=True)
-dry_down_events = dry_down_events.drop_duplicates(subset='event_start_time') # FIXED
-
-# if summarise:
-#     summary = self._summarize_events(dry_down_events, by_year=by_year, rolling=rolling, center=center)
-#     return dry_down_events, summary
-# else:
-#     return dry_down_events
-
-import hydrots.summary.baseflow as hbf
-importlib.reload(hbf)
-
-# Q = x['Q'].dropna().values 
-# v = hbf.lh(Q)
-# v = hbf.lh2(Q) 
+# ts.update_water_year(use_water_year=False)
+q50 = ts.summary.flow_quantile(quantile=0.5)['Q50']
+highflow_events = ts.summary.high_flow_fraction(threshold={'Q50_mult_1pt5': q50.values * 1.5}, by_year=True)
+high_q_dur_mean = highflow_events['event_duration'].mean()
+high_q_dur_std = highflow_events['event_duration'].std()
+zero_q = ts.summary.no_flow_fraction(threshold=0.1, by_year=False)
 
 # BFI 
 ts.summary.baseflow_index()
@@ -83,7 +56,7 @@ ts.summary.richards_baker_index(by_year=False, rolling=5, center=False)
 ts.summary.annual_maximum_flow()
 ts.summary.maximum_flow()
 
-# N-Day flow extreme 
+# N-Day flow extreme FIXME what does `index` column refer to?
 ts.summary.n_day_low_flow_extreme()
 ts.summary.n_day_low_flow_extreme(by_year=True)
 ts.summary.n_day_low_flow_extreme(rolling=5)
@@ -91,17 +64,20 @@ ts.summary.n_day_low_flow_extreme(rolling=5)
 import hydrots.summary.summary as hsm
 importlib.reload(hsm)
 
+res = hsm._NDayFlowExtreme(ts).compute(by_year=True)
+res = hsm._NDayFlowExtreme(ts).compute(rolling=5)
+
 _, res = hsm.dry_down_period(ts, summarise=True)
 
 quantiles = [0.25, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95, 0.98, 0.99]
-res = hsm.flow_quantile(ts, quantile=quantiles, safe=True, by_year=False)
+res = hsm.flow_quantile(ts, quantile=quantiles, by_year=False)
 res = hsm.flow_quantile(ts, quantile=0.05)
 
 res = hsm.high_flow_fraction(ts, threshold={'Q50': 0.27, 'Q80': 0.714})
 res = hsm.low_flow_fraction(ts, threshold={'Q50': 0.27, 'Q80': 0.714})
 
 # FIXME - if list of length one is given then column names incorrect
-q50 = hsm.flow_quantile(ts, quantile=[0.5, 0.99], safe=True, by_year=False)['Q50'].values
+q50 = hsm.flow_quantile(ts, quantile=[0.5, 0.99], by_year=False)['Q50'].values
 res = hsm.high_flow_fraction(ts, threshold={'Q50_times_1pt5': q50 * 1.5}, by_year=True)
 
 hsm.no_flow_fraction(ts, threshold=0.1)
@@ -111,15 +87,15 @@ hsm.no_flow_fraction(ts, threshold=0.1)
 res, summary = hsm.no_flow_events(ts, summarise=True)
 
 res, summary = hsm.high_flow_events(ts, summarise=True)
-res = hsm._NDayFlowExtreme(ts).compute(by_year=True, safe=True)
-res = hsm.discharge_variability_index(ts, by_year=True, safe=True)
+res = hsm._NDayFlowExtreme(ts).compute(by_year=True)
+res = hsm.discharge_variability_index(ts, by_year=True)
 res = hsm.cumulative_discharge_variability_index(ts)
 res = hsm.richards_baker_index(ts)
 
 res, summary = hsm.low_flow_events(ts, summarise=True)
 
-res = hsm.no_flow_fraction(ts)
-res = hsm.no_flow_fraction(ts, rolling=5)
+res = hsm.no_flow_fraction(ts, threshold=0.01)
+res = hsm.no_flow_fraction(ts, threshold=0.01, rolling=5)
 
 res = hsm.baseflow_index(ts, rolling=5)
 
@@ -137,8 +113,6 @@ res, summary = hsm._DryDownPeriod(ts).compute(summarise=True, by_year=True)
 
 res = hsm._RichardsBakerIndex(ts).compute(by_year=False)
 res = hsm._MaximumFlow(ts).compute(by_year=True)
-res = hsm._NDayFlowExtreme(ts).compute(by_year=True)
-res = hsm._NDayFlowExtreme(ts).compute(rolling=5)
 
 threshold = ts.data['Q'].quantile(0.95)
 res, summary = hsm._POT(ts).compute(threshold=threshold, summarise=True)

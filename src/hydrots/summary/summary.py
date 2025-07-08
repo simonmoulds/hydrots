@@ -121,7 +121,11 @@ def compute_rbi(group):
 
 
 def compute_extreme_mean_flow(group, n=7, fun='min'):
-    group = group.sort_index().copy()
+    group = group.copy() 
+    if 'time' in group.columns:
+        group = group.set_index('time')
+
+    group = group.sort_index()
     def custom_nanmean(window, n):
         # Check if the number of non-NaN values meets the min_periods requirement
         valid_values = window #[~np.isnan(window)]
@@ -151,6 +155,7 @@ def compute_extreme_mean_flow(group, n=7, fun='min'):
 
     row = group.loc[[idx], ['QMEAN']].copy()
     row = row.reset_index(drop=False)
+    
     # Return a series
     row = row.rename(columns={'time': f'{fun.upper()}{n}_TIME', 'QMEAN': f'{fun.upper()}{n}'})
     row = row.squeeze()
@@ -283,11 +288,11 @@ class _FlowQuantile(BaseSummary):
     def _compute(self, data, quantile): 
         label = format_quantile(quantile)
         if len(label) == 1:
-            label = label[0]
+            # label = label[0]
             result = data.groupby('group').apply(compute_quantile, q=quantile).apply(pd.Series)
         else:
             result = data.groupby('group').apply(compute_quantile, q=quantile)
-            result.columns = label
+        result.columns = label
         return result 
 
 class _Skewness(BaseSummary):
@@ -375,7 +380,7 @@ def highflow(value, threshold):
     return np.where(value > threshold)[0] #9 * median)[0]
 
 class _POT(EventBasedSummary):
-    def _compute(self, threshold: float, min_diff: int = 24) #, summarise=False, by_year=False, rolling=None, center=False):
+    def _compute(self, threshold: float, min_diff: int = 24): #, summarise=False, by_year=False, rolling=None, center=False):
         return self._flow_events(pot, min_diff, threshold=threshold)
 
 
@@ -616,7 +621,7 @@ def maximum_flow(ts_or_df, **kwargs):
     return _MaximumFlow(ts_or_df).compute(**kwargs)
 
 @register_summary_method
-def maximum_flow(ts_or_df, **kwargs):
+def minimum_flow(ts_or_df, **kwargs):
     return _MinimumFlow(ts_or_df).compute(**kwargs)
 
 @register_summary_method

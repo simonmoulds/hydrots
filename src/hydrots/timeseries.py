@@ -80,10 +80,9 @@ class HydroTS:
         self.metadata = self._format_metadata(metadata)
         
         # TODO change type of validator depending on application
-        self.validator = TSValidator(self.data, self.data_columns)
+        self.validator = TSValidator(self) #.data, self.data_columns)
 
     def update_validity_criteria(self, **kwargs): 
-        # self.validator.update_criteria(**kwargs)
         self.validator.update(**kwargs)
 
     def update_intermittency_criteria(self, min_zero_flow_days: int = 5, min_zero_flow_years: int = 1): 
@@ -91,15 +90,6 @@ class HydroTS:
             warnings.warn(f'`min_zero_flow_years` exceeds total number of valid years (={self.n_years}): setting value to {self.n_years}')
             min_zero_flow_years = self.n_years 
         self.intermittency_criteria = {'min_zero_flow_days': min_zero_flow_days, 'min_zero_flow_years': min_zero_flow_years}
-
-    @property 
-    def data_columns(self): 
-        return [col for col in self.data.columns if col in self.VARIABLE_COLUMNS]
-
-    @property
-    def is_valid(self):
-        """Check if dataframe has the minimum number of years at the specified availability."""
-        return self.validator.is_valid()
 
     def update_water_year(self, 
                           use_water_year: bool = True, 
@@ -257,6 +247,15 @@ class HydroTS:
         data['water_year'] = wy.values
         return data
 
+    @property 
+    def data_columns(self): 
+        return [col for col in self.data.columns if col in self.VARIABLE_COLUMNS]
+
+    @property
+    def is_valid(self):
+        """Check if dataframe has the minimum number of years at the specified availability."""
+        return self.validator.is_valid()
+
     @property
     def is_intermittent(self):
         """
@@ -303,6 +302,14 @@ class HydroTS:
         return self.data.index[-1]
 
     @property 
+    def valid_start(self): 
+        return self.valid_data.index[0]
+    
+    @property 
+    def valid_end(self): 
+        return self.valid_data.index[-1]
+
+    @property 
     def valid_years(self): 
         return self.validator.valid_years 
 
@@ -310,6 +317,23 @@ class HydroTS:
     def valid_data(self): 
         return self.data[self.data['water_year'].isin(self.validator.valid_years)]
 
+    @property 
+    def n_valid_years(self): 
+        return len(self.validator.valid_years)
+
+    @property 
+    def max_consecutive_valid_years(self): 
+        return self.validator.max_consecutive_valid_years 
+
+    @property 
+    def valid_mean_annual_availability(self): 
+        return self.validator.valid_years_mean_availability 
+    
+    @property 
+    def valid_mean_monthly_availability(self): 
+        return self.validator.valid_years_mean_monthly_availability
+
+    # FIXME - this is confusing
     @property 
     def n_years(self):
         if self.is_valid:    
