@@ -190,7 +190,9 @@ def compute_slope_fdc(group, lower_q=0.33, upper_q=0.66):
 
 def compute_bfi(group):
     """Baseflow index."""
-    return group['Qb'].sum() / group['Q'].sum()
+    Q_sum = group['Q'].sum()
+    Qb_sum = group['Qb'].sum() 
+    return Qb_sum / Q_sum if Q_sum > 0 else np.nan
 
 
 def compute_dvia(group): 
