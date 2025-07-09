@@ -303,11 +303,11 @@ class HydroTS:
 
     @property 
     def valid_start(self): 
-        return self.valid_data.index[0]
+        return self.valid_data.index[0] if self.is_valid else pd.NA
     
     @property 
     def valid_end(self): 
-        return self.valid_data.index[-1]
+        return self.valid_data.index[-1] if self.is_valid else pd.NA
 
     @property 
     def valid_years(self): 
@@ -319,27 +319,24 @@ class HydroTS:
 
     @property 
     def n_valid_years(self): 
-        return len(self.validator.valid_years)
+        return len(self.validator.valid_years) if self.is_valid else pd.NA
 
     @property 
     def max_consecutive_valid_years(self): 
-        return self.validator.max_consecutive_valid_years 
+        return self.validator.max_consecutive_valid_years if self.is_valid else 0
 
     @property 
     def valid_mean_annual_availability(self): 
-        return self.validator.valid_years_mean_availability 
+        return self.validator.valid_years_mean_availability if self.is_valid else pd.NA
     
     @property 
     def valid_mean_monthly_availability(self): 
-        return self.validator.valid_years_mean_monthly_availability
+        return self.validator.valid_years_mean_monthly_availability if self.is_valid else pd.NA 
 
     # FIXME - this is confusing
     @property 
     def n_years(self):
-        if self.is_valid:    
-            return len(self.valid_years)
-        else:
-            return 0
+        return len(self.valid_years) if self.is_valid else 0
 
     @property 
     def summary(self):
