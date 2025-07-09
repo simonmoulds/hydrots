@@ -20,22 +20,28 @@ id = 'AU00001'
 x = pd.read_csv(DATADIR / 'data' / f'{id}.csv')
 # x = pd.read_csv('data/extra/valid_data/OHDB_GBR_NRFA_00011.csv')
 # x = pd.read_csv('/Users/smoulds/projects/streamflow-data/results/OHDB_BOM__AUS_03586.csv')
-x = pd.read_csv('/Users/smoulds/dev/hydrots/data/extra/timeseries/OHDB_ARSO_SVN_00010.csv')
+# x = pd.read_csv('/Users/smoulds/dev/hydrots/data/extra/timeseries/OHDB_ARSO_SVN_00010.csv')
 # x = pd.read_csv('/Users/smoulds/projects/streamflow-data/results/OHDB_WRIS_IND_00414.csv')
+x = pd.read_csv('/Users/smoulds/dev/hydrots/data/extra/timeseries/OHDB_NRFA_GBR_00001.csv')
+x = pd.read_csv('/Users/smoulds/dev/hydrots/data/extra/timeseries/OHDB_NRFA_GBR_00009.csv')
+x = pd.read_csv('/Users/smoulds/dev/hydrots/data/extra/timeseries/OHDB_NRFA_GBR_00010.csv')
 
 
 ts = hts.HydroTS(x, metadata=None, use_water_year=False)
 # ts.update_validity_criteria(start_year=1960, end_year=2020, min_tot_years=40, min_availability=0.9)
 # ts.update_water_year(use_water_year=False)
 ts.update_water_year(use_water_year=True, water_year_start=(7, 1))
+# ts.update_validity_criteria(start_year=1984, end_year=1994, min_tot_years=5, min_availability=0.4)
 ts.update_validity_criteria(start_year=1984, end_year=2025, min_tot_years=5, min_availability=0.4)
 
-# Availability attributes: 
-ts.n_valid_years
+ts.valid_mean_annual_availability 
+ts.valid_start
+ts.valid_end
 ts.max_consecutive_valid_years 
-ts.valid_years_mean_availability 
-x = ts.valid_years_mean_monthly_availability
-# df = pd.DataFrame([x.values], columns=[calendar.month_abbr[m] for m in x.index])
+ts.n_valid_years 
+
+mean_monthly_availability = ts.valid_mean_monthly_availability.to_frame().T
+mean_monthly_availability.columns = ['ohdb_valid_data_mean_' + m.lower() + '_availability' for m in mean_monthly_availability.columns] 
 
 # ts.update_water_year(use_water_year=False)
 q50 = ts.summary.flow_quantile(quantile=0.5)['Q50']

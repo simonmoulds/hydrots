@@ -160,6 +160,16 @@ class TSValidator:
     def _compute_monthly_availability(self) -> pd.Series:
         """Compute fraction of non-NaN values per water year and month."""
         df = self.ts.data.copy()
+
+        # To calculate monthly availability we need have a complete timeseries 
+        # FIXME only works for daily data
+        month, day = self.ts.water_year_start 
+        start_year, end_year = self.valid_years[0], self.valid_years[-1]
+        start = pd.Timestamp(start_year, month, day)
+        end = pd.Timestamp(end_year, month, day) - pd.Timedelta(days=1)
+        full_range = pd.date_range(start=start, end=end, freq='1D', tz=None) # FIXME
+        df = df.reindex(full_range)
+
         df['month'] = df.index.month # Add month
         df['days_in_month'] = df.index.days_in_month
         expected_days = df.groupby(['water_year', 'month'])[['days_in_month']].first()
@@ -179,7 +189,13 @@ class TSValidator:
         for col in self.ts.data_columns: 
             monthly_availability[col] = monthly_availability[col] / monthly_availability['days_in_month']
 
-        return monthly_availability[self.ts.data_columns].min(axis=1) # FIXME
+        monthly_availability = monthly_availability[self.ts.data_columns].min(axis=1) # FIXME - right to take min? 
+        monthly_availability = monthly_availability.unstack(level='month')
+        months = [7 + i for i in range(0, 12)]
+        months = [m % 12 if m > 12 else m for m in months]
+        monthly_availability = monthly_availability[months] # reorder 
+        monthly_availability.columns = [calendar.month_abbr[m] for m in monthly_availability.columns] # Give informative names
+        return monthly_availability
 
     def _get_n_tot_years(self) -> Optional[int]:
         if 'min_availability' in self.criteria:
