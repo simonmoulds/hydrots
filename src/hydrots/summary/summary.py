@@ -510,7 +510,7 @@ class _DryDownPeriod(EventBasedSummary):
 
     def compute(self, summarise=False, by_year=False, rolling=None, center=False, **kwargs):
         events = self._compute(**kwargs)
-        if not events: 
+        if events is None or events.empty:
             return None if not summarise else (None, None)
 
         if summarise:
