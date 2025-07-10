@@ -25,6 +25,7 @@ x = pd.read_csv(DATADIR / 'data' / f'{id}.csv')
 x = pd.read_csv('/Users/smoulds/dev/hydrots/data/extra/timeseries/OHDB_NRFA_GBR_00001.csv')
 x = pd.read_csv('/Users/smoulds/dev/hydrots/data/extra/timeseries/OHDB_NRFA_GBR_00009.csv')
 x = pd.read_csv('/Users/smoulds/dev/hydrots/data/extra/timeseries/OHDB_NRFA_GBR_00010.csv')
+x = pd.read_csv('/Users/smoulds/dev/hydrots/data/extra/timeseries/OHDB_BOM__AUS_03459.csv')
 
 
 ts = hts.HydroTS(x, metadata=None, use_water_year=False)

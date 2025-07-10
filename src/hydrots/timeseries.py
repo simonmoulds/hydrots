@@ -196,8 +196,12 @@ class TSValidator:
 
         monthly_availability = monthly_availability[self.ts.data_columns].min(axis=1) # FIXME - right to take min? 
         monthly_availability = monthly_availability.unstack(level='month')
-        months = [7 + i for i in range(0, 12)]
+        months = [month + i for i in range(0, 12)]
         months = [m % 12 if m > 12 else m for m in months]
+        for m in months: 
+            if m not in monthly_availability.columns:
+                monthly_availability[m] = np.nan
+
         monthly_availability = monthly_availability[months] # reorder 
         monthly_availability.columns = [calendar.month_abbr[m] for m in monthly_availability.columns] # Give informative names
         monthly_availability = monthly_availability.fillna(0)
