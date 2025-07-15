@@ -330,7 +330,7 @@ class HydroTS:
 
         self.data = self._format_data(data, use_water_year, use_local_water_year, wettest=wettest)
         self.metadata = self._format_metadata(metadata)
-        
+        self.freq = pd.infer_freq(self.data.index)
         # TODO change type of validator depending on application
         self.validator = TSValidator(self) #.data, self.data_columns)
 
@@ -385,9 +385,7 @@ class HydroTS:
         
         # Timestep duration (days)
         data['timestep'] = data.index.to_series().diff().shift(-1).dt.total_seconds() / 86400.
-
         data = self._assign_water_year(data)
-        
         return data 
 
     def _standardize_columns(self, data: pd.DataFrame):

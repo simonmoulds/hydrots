@@ -7,7 +7,6 @@ from pathlib import Path
 from functools import reduce
 
 import hydrots.timeseries as hts
-
 importlib.reload(hts)
 
 DATADIR = Path("data/3b077711-f183-42f1-bac6-c892922c81f4")
@@ -25,24 +24,45 @@ x = pd.read_csv(DATADIR / 'data' / f'{id}.csv')
 x = pd.read_csv('/Users/smoulds/dev/hydrots/data/extra/timeseries/OHDB_NRFA_GBR_00001.csv')
 x = pd.read_csv('/Users/smoulds/dev/hydrots/data/extra/timeseries/OHDB_NRFA_GBR_00009.csv')
 x = pd.read_csv('/Users/smoulds/dev/hydrots/data/extra/timeseries/OHDB_NRFA_GBR_00010.csv')
-x = pd.read_csv('/Users/smoulds/dev/hydrots/data/extra/timeseries/OHDB_BOM__AUS_03459.csv')
+# x = pd.read_csv('/Users/smoulds/dev/hydrots/data/extra/timeseries/OHDB_BOM__AUS_03459.csv')
 
 
 ts = hts.HydroTS(x, metadata=None, use_water_year=False)
 # ts.update_validity_criteria(start_year=1960, end_year=2020, min_tot_years=40, min_availability=0.9)
 # ts.update_water_year(use_water_year=False)
-ts.update_water_year(use_water_year=True, water_year_start=(7, 1))
+# ts.update_water_year(use_water_year=True, water_year_start=(7, 1))
+ts.update_water_year(use_water_year=False) #, water_year_start=(7, 1))
 # ts.update_validity_criteria(start_year=1984, end_year=1994, min_tot_years=5, min_availability=0.4)
-ts.update_validity_criteria(start_year=1984, end_year=2025, min_tot_years=5, min_availability=0.4)
+ts.update_validity_criteria(start_year=1950, end_year=2025, min_tot_years=5, min_availability=0.8)
 
-ts.valid_mean_annual_availability 
-ts.valid_start
-ts.valid_end
-ts.max_consecutive_valid_years 
-ts.n_valid_years 
+import hydrots.summary.summary as hsm
+importlib.reload(hsm)
 
-mean_monthly_availability = ts.valid_mean_monthly_availability.to_frame().T
-mean_monthly_availability.columns = ['ohdb_valid_data_mean_' + m.lower() + '_availability' for m in mean_monthly_availability.columns] 
+# self = hsm.BaseSummary(ts)
+# grp = self._get_grouped_data(self.data, by_year=True, rolling=5, by_season=True)
+
+# This works
+res = hsm._MaximumFlow(ts).compute(by_year=True, by_season=True)
+res = hsm._MaximumFlow(ts).compute(by_year=False, by_season=True)
+res = hsm._GSIM(ts).compute(annual=True)
+res = hsm._GSIM(ts).compute(annual=False, monthly=True)
+res = hsm._GSIM(ts).compute(annual=False, seasonal=True)
+res = hsm._StreamflowIndices(ts).compute(by_year=False) 
+res = hsm._StreamflowIndices(ts).compute(by_year=True, rolling=10) # HIGH_Q_FREQ etc. do not seem to work
+ts.summary.streamflow_indices()
+
+# df = ts.data.copy()
+# df['week'] = df.index.isocalendar().week
+# df.resample('W')['Q'].mean()
+
+# ts.valid_mean_annual_availability 
+# ts.valid_start
+# ts.valid_end
+# ts.max_consecutive_valid_years 
+# ts.n_valid_years 
+
+# mean_monthly_availability = ts.valid_mean_monthly_availability.to_frame().T
+# mean_monthly_availability.columns = ['ohdb_valid_data_mean_' + m.lower() + '_availability' for m in mean_monthly_availability.columns] 
 
 # ts.update_water_year(use_water_year=False)
 q50 = ts.summary.flow_quantile(quantile=0.5)['Q50']
@@ -67,9 +87,6 @@ ts.summary.maximum_flow()
 ts.summary.n_day_low_flow_extreme()
 ts.summary.n_day_low_flow_extreme(by_year=True)
 ts.summary.n_day_low_flow_extreme(rolling=5)
-
-import hydrots.summary.summary as hsm
-importlib.reload(hsm)
 
 res = hsm._NDayFlowExtreme(ts).compute(by_year=True)
 res = hsm._NDayFlowExtreme(ts).compute(rolling=5)

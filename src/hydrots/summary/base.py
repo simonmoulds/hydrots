@@ -106,11 +106,22 @@ class BaseSummary:
     def _compute(self, data, **kwargs): 
         raise NotImplementedError
 
-    def compute(self, by_year=False, rolling=None, center=False, include_duration=True, **kwargs):
+    def compute(self, 
+                by_year=False, 
+                rolling=None, 
+                center=False, 
+                by_season=False, 
+                by_month=False, 
+                include_duration=True, 
+                **kwargs):
+
         if self.data is None:
             raise ValueError("No data was provided. You must supply data at initialization or call _compute directly.")
 
-        data = self._get_grouped_data(self.data, by_year=by_year, rolling=rolling, center=center)
+        data = self._get_grouped_data(
+            self.data, by_year=by_year, rolling=rolling, 
+            center=center, by_season=by_season, by_month=by_month
+        )
         duration = self._compute_duration(data)
         result = self._compute(data, **kwargs)
         if include_duration:
