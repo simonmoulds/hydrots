@@ -38,18 +38,21 @@ ts.update_validity_criteria(start_year=1950, end_year=2025, min_tot_years=5, min
 import hydrots.summary.summary as hsm
 importlib.reload(hsm)
 
-# self = hsm.BaseSummary(ts)
-# grp = self._get_grouped_data(self.data, by_year=True, rolling=5, by_season=True)
+import hydrots.summary.summary as hsm
+importlib.reload(hsm)
 
 # This works
-res = hsm._MaximumFlow(ts).compute(by_year=True, by_season=True)
+res = hsm._MaximumFlow(ts).compute(by_year=True, rolling=5, by_season=True)
 res = hsm._MaximumFlow(ts).compute(by_year=False, by_season=True)
 res = hsm._GSIM(ts).compute(annual=True)
 res = hsm._GSIM(ts).compute(annual=False, monthly=True)
 res = hsm._GSIM(ts).compute(annual=False, seasonal=True)
 res = hsm._StreamflowIndices(ts).compute(by_year=False) 
-res = hsm._StreamflowIndices(ts).compute(by_year=True, rolling=10) # HIGH_Q_FREQ etc. do not seem to work
-ts.summary.streamflow_indices()
+res = hsm._StreamflowIndices(ts).compute(by_year=True, rolling=10)
+res = hsm._StreamflowIndices(ts).compute(by_year=True)
+res, summary = hsm._HighFlowEvents(ts).compute(summarise=True, threshold=200, by_year=True, rolling=5)
+res = hsm._HighFlowEvents(ts).compute(summarise=False, threshold=50, by_year=True)
+ts.summary.streamflow_indices(by_year=True)
 
 # df = ts.data.copy()
 # df['week'] = df.index.isocalendar().week
