@@ -20,6 +20,350 @@ COMMON_KWARGS_DOC = """
 """
 
 
+MONTHS = 'JFMAMJJASONDJFMAMJJASONDJF'  # 24 months for wraparound
+
+# def reorder_by_earliest_start(lists):
+#     """
+#     Reorder a list of lists so that the sublist with the smallest
+#     first element is first. Relative order of the rest is preserved.
+#     """
+#     if not lists:
+#         return lists
+
+#     # Find index of the sublist with the smallest first element
+#     start_idx = min(range(len(lists)), key=lambda i: lists[i][0])
+    
+#     # Rotate the list
+#     return lists[start_idx:] + lists[:start_idx]
+def reorder_season_dict_by_start_month(season_dict):
+    """
+    Reorder a season dictionary so the entry with the smallest starting month comes first.
+    Preserves the order of the remaining items.
+    """
+    if not season_dict:
+        return season_dict
+
+    items = list(season_dict.items())
+    # Find the index of the entry with the smallest first month
+    start_idx = min(range(len(items)), key=lambda i: items[i][1][0])
+    # Rotate the items
+    rotated_items = items[start_idx:] + items[:start_idx]
+    # Reconstruct dictionary (order preserved in Python 3.7+)
+    return dict(rotated_items)
+
+def parse_season_string(season_str):
+    """
+    Given a season string like 'MAM', 'JASO', 'NDJF', return:
+    - the list of month indices (1–12)
+    - the starting month index (1-based)
+    
+    Raises ValueError if the season string doesn't represent consecutive months.
+    """
+    season_str = season_str.upper()
+
+    idx = MONTHS.find(season_str)
+    if idx == -1: 
+        raise ValueError(f'{season_str} is not a valid season')
+    n_months = len(season_str)
+
+    # Build list of month indices, wrapping around year end
+    month_indices = [(idx + i) % 12 + 1 for i in range(n_months)]
+    return month_indices
+
+def validate_seasons(seasons):
+    """Ensure seasons form a continuous sequence of months, return the start month."""
+    season_index = [parse_season_string(season) for season in seasons]
+    merged_season_index = sum(season_index, [])
+    if len(merged_season_index) > len(set(merged_season_index)): 
+        raise ValueError(f'Invalid seasons: some months are duplicated')
+
+    seasons_dict = {season:parse_season_string(season) for season in seasons}
+    seasons_dict = reorder_season_dict_by_start_month(seasons_dict)
+    return seasons_dict
+
+class BaseSummary: 
+
+    def __init__(self, ts_or_df: Optional["HydroTS"]=None):
+        # if isinstance(ts_or_df, HydroTS):
+        if ts_or_df is None: 
+            self.ts = None 
+            self.data = None 
+        elif hasattr(ts_or_df, "valid_data"):  # Likely a HydroTS object
+            self.ts = copy.deepcopy(ts_or_df)
+            self.data = None #ts_or_df.valid_data.copy()
+        # elif isinstance(ts_or_df, pd.DataFrame):
+        #     self.ts = None
+        #     self.data = ts_or_df.copy()
+        else:
+            raise TypeError("Input must be a HydroTS object or a pandas DataFrame or None.")
+    # def __init__(self, ts_or_df: Optional[Union["HydroTS", pd.DataFrame]]=None, discharge_col=None): 
+    #     # if isinstance(ts_or_df, HydroTS):
+    #     if ts_or_df is None: 
+    #         self.ts = None 
+    #         self.data = None 
+    #     elif hasattr(ts_or_df, "valid_data"):  # Likely a HydroTS object
+    #         self.ts = ts_or_df
+    #         self.data = ts_or_df.valid_data.copy()
+    #     elif isinstance(ts_or_df, pd.DataFrame):
+    #         self.ts = None
+    #         self.data = ts_or_df.copy()
+    #     else:
+    #         raise TypeError("Input must be a HydroTS object or a pandas DataFrame or None.")
+
+    def _compute_duration(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute the duration of each group based on the 'time' column.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            DataFrame with a 'time' column and grouping labels.
+        group_col : str, optional
+            Name of the column to group by (default is 'group').
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame with group index and 'duration_days'.
+        """
+        return (
+            data.groupby('group')[['time', 'Q']] # FIXME should be `value` not `Q`
+            .agg(
+                summary_period_duration=('time', lambda x: x.max() - x.min() + ((x.iloc[1] - x.iloc[0]) if len(x) > 1 else pd.Timedelta(0))),
+                data_availability=('Q', lambda x: x.notna().sum() / len(x) if len(x) > 0 else 0)
+            ) # FIXME should be able to get time resolution from HydroTS object
+        )
+
+    def _get_grouped_data(self, data, by_year=False, rolling=None, center=False, by_season=False, seasons=None, by_month=False):
+
+        data = data.reset_index(drop=False)
+        if by_season or by_month: 
+
+            if by_season:
+                seasons_dict = validate_seasons(seasons)
+
+            # Remove index, because this won't work with overlapping groups (i.e. when `rolling` is set)
+            data = data.reset_index(drop=False) 
+            data['group0'] = data['time'].apply(lambda x: assign_season_label(x, seasons_dict)) if by_season else data['time'].apply(assign_month_label)
+            data['group1'] = data['water_year'] # This works because we have changed the water year, above
+
+            # If by_season/by_month and by_year we use the calendar year to create groups
+            if by_year:
+                group_datas = []
+                if rolling is not None: 
+                    years = data['group1'].unique()
+                    group_datas = []
+                    for i in range(len(years) - rolling + 1):
+                        window_years = years[i:i + rolling]
+                        if center:
+                            center_idx = i + rolling // 2
+                            group_label = str(years[center_idx])
+                        else:
+                            group_label = f"{window_years[0]}–{window_years[-1]}"
+                        window_data = data[data['group1'].isin(window_years)].copy()
+                        window_data['group'] = group_label + '-' + window_data['group0']
+                        group_datas.append(window_data)
+
+                    data = pd.concat(group_datas, ignore_index=True)
+                else: 
+                    data['group'] = data['group1'].astype(str) + '-' + data['group0']
+
+            else:
+                data['group'] = data['group0']
+
+            data = data.drop(['group0', 'group1'], axis=1)
+
+        if not by_month and not by_season:
+
+            data = data.reset_index(drop=False)
+            years = sorted(self.ts.valid_years)
+
+            if by_year:
+                if rolling is not None:
+                    group_datas = []
+                    for i in range(len(years) - rolling + 1):
+                        window_years = years[i:i + rolling]
+                        if center:
+                            center_idx = i + rolling // 2
+                            group_label = str(years[center_idx])
+                        else:
+                            group_label = f"{window_years[0]}-{window_years[-1]}"
+                        window_data = data[data['water_year'].isin(window_years)].copy()
+                        window_data['group'] = group_label
+                        group_datas.append(window_data)
+                    data = pd.concat(group_datas, ignore_index=True)
+                else:
+                    data['group'] = data['water_year']
+
+            else:
+                data['group'] = f'{years[0]}-{years[-1]}'
+        
+        return data
+
+    def _compute(self, data, **kwargs): 
+        raise NotImplementedError
+
+    def _format_data(self, by_season=False, seasons=['MAM', 'JJA', 'SON', 'DJF'], by_month=False): 
+        if by_season:
+            seasons_dict = validate_seasons(seasons)
+            first_season = next(iter(seasons_dict))
+            season_start_index = seasons_dict[first_season][0]
+            # Check the water year and update if necessary
+            if self.ts.water_year_start[0] != season_start_index: 
+                self.ts.update_water_year(use_water_year=True, water_year_start=(season_start_index, 1))
+
+            data = self.ts.valid_data.copy()
+            # This ensures that data availability is correctly calculated 
+            # when the timeseries start and end occurs in the middle of a season.
+            valid_seasons = data.index.map(lambda x: get_season_period(x, seasons_dict)).unique()
+            valid_mask = [(pd.notna(start) and pd.notna(end)) for (start, end) in valid_seasons]
+            valid_seasons = valid_seasons[valid_mask]
+            new_index = pd.concat([pd.Series(pd.date_range(start, end, freq=self.ts.freq, tz=None), name='time') for start, end in valid_seasons])
+            new_index = pd.DatetimeIndex(new_index)
+            data = data.reindex(new_index)
+
+        elif by_month: 
+            if self.ts.water_year_start[0] != 1: 
+                self.ts.update_water_year(use_water_year=False)
+            data = self.ts.valid_data.copy()
+        else: 
+            data = self.ts.valid_data.copy()
+        return data 
+
+    def compute(self, 
+                by_year=False, 
+                rolling=None, 
+                center=False, 
+                by_season=False, 
+                seasons=['MAM', 'JJA', 'SON', 'DJF'],
+                by_month=False, 
+                include_duration=True, 
+                **kwargs):
+
+        data = self._format_data(by_season=by_season, seasons=seasons, by_month=by_month)
+        data = self._get_grouped_data(
+            data, by_year=by_year, rolling=rolling, 
+            center=center, by_season=by_season, seasons=seasons,
+            by_month=by_month
+        )
+        duration = self._compute_duration(data)
+        result = self._compute(data, **kwargs)
+        if include_duration:
+            return pd.merge(result, duration, left_index=True, right_index=True)
+        else:
+            return result 
+
+class EventBasedSummary(BaseSummary): 
+    def _compute_mean_deficit(self, events): 
+        pass
+
+    def _simple_flow_events(self, data, event_condition, **kwargs): 
+        data = data.reset_index(drop=False)
+        vals = self.data['Q'].values 
+        is_event = event_condition(vals, **kwargs)
+        data['event_duration'] = is_event * data['timestep'] # timestep has units of days
+        data = data.set_index('time')
+        return data
+
+    def _flow_events(self, data, event_condition, min_diff: int = 24, **kwargs) -> pd.DataFrame: 
+
+        vals = data['Q'].values 
+
+        # Indices where data exceeds threshold
+        data_index = event_condition(vals, **kwargs)
+        if len(data_index) == 0:
+            return None
+
+        # Time difference between consecutive exceedance indices
+        times = data.index[data_index]
+        diff_hours = np.diff(times).astype('timedelta64[h]')
+        
+        # Where difference is greater than min_diff, it's a new event
+        sep_index = np.where(diff_hours > min_diff)[0]
+        
+        start_index = np.concatenate(([data_index[0]], data_index[sep_index + 1]))
+        end_index = np.concatenate((data_index[sep_index], [data_index[-1]]))
+
+        start_times = data.index[start_index].values
+        end_times = data.index[end_index].values
+        duration = (end_times - start_times).astype('timedelta64[D]')
+        water_year = data.iloc[start_index]['water_year'].values # i.e. take the water year at the start of the event
+
+        n_events = len(start_index)
+
+        if n_events == 0:
+            return None
+
+        return pd.DataFrame({'water_year': water_year, 'event_start_time': start_times, 'event_end_time': end_times, 'event_duration': duration})
+
+    def _summarize_events(self, data, events, by_year, rolling, center): 
+        
+        # First calculate the duration of each period
+        grouped_data = self._get_grouped_data(data, by_year=by_year, rolling=rolling, center=center)
+        duration = self._compute_duration(grouped_data)
+
+        # Now aggregate the events 
+        default_events = pd.DataFrame({
+            'water_year': self.ts.valid_years, 
+            'n_events': 0, 
+            'mean_duration': None, 
+            'total_duration': None}
+        )
+        if isinstance(events, pd.DataFrame):
+            result = events.groupby('water_year').agg(
+                n_events=('water_year', 'size'), 
+                mean_duration=('event_duration', 'mean'), 
+                total_duration=('event_duration', 'sum')
+            )
+            result = pd.DataFrame(result, index=self.ts.valid_years)
+            result['n_events'] = result['n_events'].fillna(0).astype(int)
+        else:
+            result = default_events 
+
+        result = self._get_grouped_data(result, by_year=by_year, rolling=rolling, center=center)
+        result = result.groupby('group').agg(
+            n_events=('n_events', 'sum'), # Take the water year of the event start
+            mean_event_duration=('mean_duration', 'mean'),
+            total_duration=('total_duration', 'sum')
+        )
+        result = pd.merge(result, duration, left_index=True, right_index=True)
+
+        result['mean_event_duration'] = result['mean_event_duration'].to_numpy()
+        result['total_duration'] = result['total_duration'].to_numpy()
+
+        # Compute frequency and mean duration in days 
+        def get_event_frequency(row): 
+            try:
+                total_duration_seconds = row['total_duration'].total_seconds()
+            except AttributeError: 
+                total_duration_seconds = float(row['total_duration']) # CHECK
+
+            summary_period_duration_seconds = row['summary_period_duration'].total_seconds()
+            return total_duration_seconds / summary_period_duration_seconds
+        
+        def get_mean_event_duration_days(row): 
+            n_events = row['n_events']
+            if n_events == 0: 
+                return 0.
+            else: 
+                return float(row['mean_event_duration'].days)
+
+        result['frequency'] = result.apply(get_event_frequency, axis=1)
+        result['mean_event_duration_days'] = result.apply(get_mean_event_duration_days, axis=1)
+
+        return result
+
+    def _compute(self, data, **kwargs): 
+        raise NotImplementedError 
+
+    def compute(self, summarise=False, by_year=False, rolling=None, center=False, **kwargs):
+        data = self._format_data()
+        events = self._compute(data, **kwargs)
+        if summarise:
+            summary = self._summarize_events(data, events, by_year=by_year, rolling=rolling, center=center)
+            return events, summary
+        else:
+            return events
 def format_quantile(quantile: Union[float, list]) -> str:
     if isinstance(quantile, float): 
         quantile = [quantile]
@@ -1361,348 +1705,3 @@ def assign_month_label(date):
 #         months.append(month_str_to_num[abbr])
 #         i += 3
 #     return months
-
-MONTHS = 'JFMAMJJASONDJFMAMJJASONDJF'  # 24 months for wraparound
-
-# def reorder_by_earliest_start(lists):
-#     """
-#     Reorder a list of lists so that the sublist with the smallest
-#     first element is first. Relative order of the rest is preserved.
-#     """
-#     if not lists:
-#         return lists
-
-#     # Find index of the sublist with the smallest first element
-#     start_idx = min(range(len(lists)), key=lambda i: lists[i][0])
-    
-#     # Rotate the list
-#     return lists[start_idx:] + lists[:start_idx]
-def reorder_season_dict_by_start_month(season_dict):
-    """
-    Reorder a season dictionary so the entry with the smallest starting month comes first.
-    Preserves the order of the remaining items.
-    """
-    if not season_dict:
-        return season_dict
-
-    items = list(season_dict.items())
-    # Find the index of the entry with the smallest first month
-    start_idx = min(range(len(items)), key=lambda i: items[i][1][0])
-    # Rotate the items
-    rotated_items = items[start_idx:] + items[:start_idx]
-    # Reconstruct dictionary (order preserved in Python 3.7+)
-    return dict(rotated_items)
-
-def parse_season_string(season_str):
-    """
-    Given a season string like 'MAM', 'JASO', 'NDJF', return:
-    - the list of month indices (1–12)
-    - the starting month index (1-based)
-    
-    Raises ValueError if the season string doesn't represent consecutive months.
-    """
-    season_str = season_str.upper()
-
-    idx = MONTHS.find(season_str)
-    if idx == -1: 
-        raise ValueError(f'{season_str} is not a valid season')
-    n_months = len(season_str)
-
-    # Build list of month indices, wrapping around year end
-    month_indices = [(idx + i) % 12 + 1 for i in range(n_months)]
-    return month_indices
-
-def validate_seasons(seasons):
-    """Ensure seasons form a continuous sequence of months, return the start month."""
-    season_index = [parse_season_string(season) for season in seasons]
-    merged_season_index = sum(season_index, [])
-    if len(merged_season_index) > len(set(merged_season_index)): 
-        raise ValueError(f'Invalid seasons: some months are duplicated')
-
-    seasons_dict = {season:parse_season_string(season) for season in seasons}
-    seasons_dict = reorder_season_dict_by_start_month(seasons_dict)
-    return seasons_dict
-
-class BaseSummary: 
-
-    def __init__(self, ts_or_df: Optional["HydroTS"]=None):
-        # if isinstance(ts_or_df, HydroTS):
-        if ts_or_df is None: 
-            self.ts = None 
-            self.data = None 
-        elif hasattr(ts_or_df, "valid_data"):  # Likely a HydroTS object
-            self.ts = copy.deepcopy(ts_or_df)
-            self.data = None #ts_or_df.valid_data.copy()
-        # elif isinstance(ts_or_df, pd.DataFrame):
-        #     self.ts = None
-        #     self.data = ts_or_df.copy()
-        else:
-            raise TypeError("Input must be a HydroTS object or a pandas DataFrame or None.")
-    # def __init__(self, ts_or_df: Optional[Union["HydroTS", pd.DataFrame]]=None, discharge_col=None): 
-    #     # if isinstance(ts_or_df, HydroTS):
-    #     if ts_or_df is None: 
-    #         self.ts = None 
-    #         self.data = None 
-    #     elif hasattr(ts_or_df, "valid_data"):  # Likely a HydroTS object
-    #         self.ts = ts_or_df
-    #         self.data = ts_or_df.valid_data.copy()
-    #     elif isinstance(ts_or_df, pd.DataFrame):
-    #         self.ts = None
-    #         self.data = ts_or_df.copy()
-    #     else:
-    #         raise TypeError("Input must be a HydroTS object or a pandas DataFrame or None.")
-
-    def _compute_duration(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Compute the duration of each group based on the 'time' column.
-
-        Parameters
-        ----------
-        data : pd.DataFrame
-            DataFrame with a 'time' column and grouping labels.
-        group_col : str, optional
-            Name of the column to group by (default is 'group').
-
-        Returns
-        -------
-        pd.DataFrame
-            A DataFrame with group index and 'duration_days'.
-        """
-        return (
-            data.groupby('group')[['time', 'Q']] # FIXME should be `value` not `Q`
-            .agg(
-                summary_period_duration=('time', lambda x: x.max() - x.min() + ((x.iloc[1] - x.iloc[0]) if len(x) > 1 else pd.Timedelta(0))),
-                data_availability=('Q', lambda x: x.notna().sum() / len(x) if len(x) > 0 else 0)
-            ) # FIXME should be able to get time resolution from HydroTS object
-        )
-
-    def _get_grouped_data(self, data, by_year=False, rolling=None, center=False, by_season=False, seasons=None, by_month=False):
-
-        data = data.reset_index(drop=False)
-        if by_season or by_month: 
-
-            if by_season:
-                seasons_dict = validate_seasons(seasons)
-
-            # Remove index, because this won't work with overlapping groups (i.e. when `rolling` is set)
-            data = data.reset_index(drop=False) 
-            data['group0'] = data['time'].apply(lambda x: assign_season_label(x, seasons_dict)) if by_season else data['time'].apply(assign_month_label)
-            data['group1'] = data['water_year'] # This works because we have changed the water year, above
-
-            # If by_season/by_month and by_year we use the calendar year to create groups
-            if by_year:
-                group_datas = []
-                if rolling is not None: 
-                    years = data['group1'].unique()
-                    group_datas = []
-                    for i in range(len(years) - rolling + 1):
-                        window_years = years[i:i + rolling]
-                        if center:
-                            center_idx = i + rolling // 2
-                            group_label = str(years[center_idx])
-                        else:
-                            group_label = f"{window_years[0]}–{window_years[-1]}"
-                        window_data = data[data['group1'].isin(window_years)].copy()
-                        window_data['group'] = group_label + '-' + window_data['group0']
-                        group_datas.append(window_data)
-
-                    data = pd.concat(group_datas, ignore_index=True)
-                else: 
-                    data['group'] = data['group1'].astype(str) + '-' + data['group0']
-
-            else:
-                data['group'] = data['group0']
-
-            data = data.drop(['group0', 'group1'], axis=1)
-
-        if not by_month and not by_season:
-
-            data = data.reset_index(drop=False)
-            years = sorted(self.ts.valid_years)
-
-            if by_year:
-                if rolling is not None:
-                    group_datas = []
-                    for i in range(len(years) - rolling + 1):
-                        window_years = years[i:i + rolling]
-                        if center:
-                            center_idx = i + rolling // 2
-                            group_label = str(years[center_idx])
-                        else:
-                            group_label = f"{window_years[0]}-{window_years[-1]}"
-                        window_data = data[data['water_year'].isin(window_years)].copy()
-                        window_data['group'] = group_label
-                        group_datas.append(window_data)
-                    data = pd.concat(group_datas, ignore_index=True)
-                else:
-                    data['group'] = data['water_year']
-
-            else:
-                data['group'] = f'{years[0]}-{years[-1]}'
-        
-        return data
-
-    def _compute(self, data, **kwargs): 
-        raise NotImplementedError
-
-    def _format_data(self, by_season=False, seasons=['MAM', 'JJA', 'SON', 'DJF'], by_month=False): 
-        if by_season:
-            seasons_dict = validate_seasons(seasons)
-            first_season = next(iter(seasons_dict))
-            season_start_index = seasons_dict[first_season][0]
-            # Check the water year and update if necessary
-            if self.ts.water_year_start[0] != season_start_index: 
-                self.ts.update_water_year(use_water_year=True, water_year_start=(season_start_index, 1))
-
-            data = self.ts.valid_data.copy()
-            # This ensures that data availability is correctly calculated 
-            # when the timeseries start and end occurs in the middle of a season.
-            valid_seasons = data.index.map(lambda x: get_season_period(x, seasons_dict)).unique()
-            valid_mask = [(pd.notna(start) and pd.notna(end)) for (start, end) in valid_seasons]
-            valid_seasons = valid_seasons[valid_mask]
-            new_index = pd.concat([pd.Series(pd.date_range(start, end, freq=self.ts.freq, tz=None), name='time') for start, end in valid_seasons])
-            new_index = pd.DatetimeIndex(new_index)
-            data = data.reindex(new_index)
-
-        elif by_month: 
-            if self.ts.water_year_start[0] != 1: 
-                self.ts.update_water_year(use_water_year=False)
-            data = self.ts.valid_data.copy()
-        else: 
-            data = self.ts.valid_data.copy()
-        return data 
-
-    def compute(self, 
-                by_year=False, 
-                rolling=None, 
-                center=False, 
-                by_season=False, 
-                seasons=['MAM', 'JJA', 'SON', 'DJF'],
-                by_month=False, 
-                include_duration=True, 
-                **kwargs):
-
-        data = self._format_data(by_season=by_season, seasons=seasons, by_month=by_month)
-        data = self._get_grouped_data(
-            data, by_year=by_year, rolling=rolling, 
-            center=center, by_season=by_season, seasons=seasons,
-            by_month=by_month
-        )
-        duration = self._compute_duration(data)
-        result = self._compute(data, **kwargs)
-        if include_duration:
-            return pd.merge(result, duration, left_index=True, right_index=True)
-        else:
-            return result 
-
-class EventBasedSummary(BaseSummary): 
-    def _compute_mean_deficit(self, events): 
-        pass
-
-    def _simple_flow_events(self, data, event_condition, **kwargs): 
-        data = data.reset_index(drop=False)
-        vals = self.data['Q'].values 
-        is_event = event_condition(vals, **kwargs)
-        data['event_duration'] = is_event * data['timestep'] # timestep has units of days
-        data = data.set_index('time')
-        return data
-
-    def _flow_events(self, data, event_condition, min_diff: int = 24, **kwargs) -> pd.DataFrame: 
-
-        vals = data['Q'].values 
-
-        # Indices where data exceeds threshold
-        data_index = event_condition(vals, **kwargs)
-        if len(data_index) == 0:
-            return None
-
-        # Time difference between consecutive exceedance indices
-        times = data.index[data_index]
-        diff_hours = np.diff(times).astype('timedelta64[h]')
-        
-        # Where difference is greater than min_diff, it's a new event
-        sep_index = np.where(diff_hours > min_diff)[0]
-        
-        start_index = np.concatenate(([data_index[0]], data_index[sep_index + 1]))
-        end_index = np.concatenate((data_index[sep_index], [data_index[-1]]))
-
-        start_times = data.index[start_index].values
-        end_times = data.index[end_index].values
-        duration = (end_times - start_times).astype('timedelta64[D]')
-        water_year = data.iloc[start_index]['water_year'].values # i.e. take the water year at the start of the event
-
-        n_events = len(start_index)
-
-        if n_events == 0:
-            return None
-
-        return pd.DataFrame({'water_year': water_year, 'event_start_time': start_times, 'event_end_time': end_times, 'event_duration': duration})
-
-    def _summarize_events(self, data, events, by_year, rolling, center): 
-        
-        # First calculate the duration of each period
-        grouped_data = self._get_grouped_data(data, by_year=by_year, rolling=rolling, center=center)
-        duration = self._compute_duration(grouped_data)
-
-        # Now aggregate the events 
-        default_events = pd.DataFrame({
-            'water_year': self.ts.valid_years, 
-            'n_events': 0, 
-            'mean_duration': None, 
-            'total_duration': None}
-        )
-        if isinstance(events, pd.DataFrame):
-            result = events.groupby('water_year').agg(
-                n_events=('water_year', 'size'), 
-                mean_duration=('event_duration', 'mean'), 
-                total_duration=('event_duration', 'sum')
-            )
-            result = pd.DataFrame(result, index=self.ts.valid_years)
-            result['n_events'] = result['n_events'].fillna(0).astype(int)
-        else:
-            result = default_events 
-
-        result = self._get_grouped_data(result, by_year=by_year, rolling=rolling, center=center)
-        result = result.groupby('group').agg(
-            n_events=('n_events', 'sum'), # Take the water year of the event start
-            mean_event_duration=('mean_duration', 'mean'),
-            total_duration=('total_duration', 'sum')
-        )
-        result = pd.merge(result, duration, left_index=True, right_index=True)
-
-        result['mean_event_duration'] = result['mean_event_duration'].to_numpy()
-        result['total_duration'] = result['total_duration'].to_numpy()
-
-        # Compute frequency and mean duration in days 
-        def get_event_frequency(row): 
-            try:
-                total_duration_seconds = row['total_duration'].total_seconds()
-            except AttributeError: 
-                total_duration_seconds = float(row['total_duration']) # CHECK
-
-            summary_period_duration_seconds = row['summary_period_duration'].total_seconds()
-            return total_duration_seconds / summary_period_duration_seconds
-        
-        def get_mean_event_duration_days(row): 
-            n_events = row['n_events']
-            if n_events == 0: 
-                return 0.
-            else: 
-                return float(row['mean_event_duration'].days)
-
-        result['frequency'] = result.apply(get_event_frequency, axis=1)
-        result['mean_event_duration_days'] = result.apply(get_mean_event_duration_days, axis=1)
-
-        return result
-
-    def _compute(self, data, **kwargs): 
-        raise NotImplementedError 
-
-    def compute(self, summarise=False, by_year=False, rolling=None, center=False, **kwargs):
-        data = self._format_data()
-        events = self._compute(data, **kwargs)
-        if summarise:
-            summary = self._summarize_events(data, events, by_year=by_year, rolling=rolling, center=center)
-            return events, summary
-        else:
-            return events
