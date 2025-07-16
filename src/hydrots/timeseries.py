@@ -25,7 +25,8 @@ class TSValidator:
                  min_tot_years: Optional[int] = None,
                  min_consecutive_years: Optional[int] = None,
                  min_availability: Optional[float] = None, 
-                 min_monthly_availability: Optional[float] = None):
+                 min_monthly_availability: Optional[float] = None,
+                 min_valid_months_per_year: Optional[int] = None):
 
         # TODO check that this is updated when HydroTS object is updated (e.g. when water year is recomputed)
         self.ts = ts 
@@ -34,7 +35,7 @@ class TSValidator:
         # self.water_year_start = ts.water_year_start
         # self.freq = freq
         self.criteria: Dict[str, Optional[float | int]] = {}
-        self._set_validity_criteria(start_year, end_year, min_tot_years, min_consecutive_years, min_availability, min_monthly_availability)
+        self._set_validity_criteria(start_year, end_year, min_tot_years, min_consecutive_years, min_availability, min_monthly_availability, min_valid_months_per_year)
         self._compute_valid_years()
         self._compute_annual_availability()
 
@@ -44,7 +45,8 @@ class TSValidator:
                                min_tot_years: Optional[int],
                                min_consecutive_years: Optional[int],
                                min_availability: Optional[float],
-                               min_monthly_availability: Optional[float]):
+                               min_monthly_availability: Optional[float],
+                               min_valid_months_per_year: Optional[int]):
 
         new_values = {
             'start_year': start_year,
@@ -52,7 +54,8 @@ class TSValidator:
             'min_tot_years': min_tot_years,
             'min_consecutive_years': min_consecutive_years,
             'min_availability': min_availability,
-            'min_monthly_availability': min_monthly_availability
+            'min_monthly_availability': min_monthly_availability,
+            'min_valid_months_per_year': min_valid_months_per_year
         }
 
         # Only store non-None values
@@ -72,7 +75,8 @@ class TSValidator:
             kwargs.get('min_tot_years', self.criteria.get('min_tot_years')),
             kwargs.get('min_consecutive_years', self.criteria.get('min_consecutive_years')),
             kwargs.get('min_availability', self.criteria.get('min_availability')),
-            kwargs.get('min_monthly_availability', self.criteria.get('min_monthly_availability'))
+            kwargs.get('min_monthly_availability', self.criteria.get('min_monthly_availability')),
+            kwargs.get('min_valid_months_per_year', self.criteria.get('min_valid_months_per_year'))
         )
         return self
 
@@ -82,21 +86,64 @@ class TSValidator:
         self._compute_annual_availability()
 
     def _compute_valid_years(self):
+        # min_avail = self.criteria.get('min_availability')
+        # min_monthly_avail = self.criteria.get('min_monthly_availability')
+
+        # if min_avail is None and min_monthly_avail is None:
+        #     return None
+
+        # # Slice by start/end year if provided
+        # avail = self.availability  # pandas Series indexed by year
+        # start = self.criteria.get('start_year')
+        # if start is not None:
+        #     avail = avail[avail.index >= start]
+
+        # end = self.criteria.get('end_year')
+        # if end is not None:
+        #     avail = avail[avail.index <= end]
+
+        # # Apply annual availability mask if needed
+        # valid_mask = pd.Series(True, index=avail.index)
+        # if min_avail is not None:
+        #     valid_mask &= (avail >= min_avail)
+
+        # # Apply monthly availability check if specified
+        # if min_monthly_avail is not None:
+        #     raise NotImplementedError('`min_monthly_avail` not currently supported')
+        #     # df = self.ts.data.copy()  # DataFrame with datetime index and column 'Q'
+        #     # df['year'] = df.index.year
+        #     # df['month'] = df.index.month
+        #     # df['is_valid'] = ~df[self.ts.data_columns].isna()
+
+        #     # # Count valid days per (year, month)
+        #     # monthly_valid_counts = df.groupby(['year', 'month'])['is_valid'].sum()
+        #     # # Total days per (year, month)
+        #     # monthly_total_days = df.groupby(['year', 'month'])['is_valid'].count()
+        #     # # Monthly availability [unstack() puts months into columns]
+        #     # monthly_avail = (monthly_valid_counts / monthly_total_days).unstack()
+
+        #     # # Check that all months in a year meet the threshold
+        #     # monthly_valid_years = (monthly_avail >= min_monthly_avail).all(axis=1)
+        #     # valid_mask &= valid_mask.index.isin(monthly_valid_years[monthly_valid_years].index)
+
+        # # return valid_mask[valid_mask].index
+        # self._valid_years = valid_mask[valid_mask].index
         min_avail = self.criteria.get('min_availability')
         min_monthly_avail = self.criteria.get('min_monthly_availability')
+        min_valid_months_per_year = self.criteria.get('min_valid_months_per_year')
 
         if min_avail is None and min_monthly_avail is None:
             return None
 
         # Slice by start/end year if provided
         avail = self.availability  # pandas Series indexed by year
-        start = self.criteria.get('start_year')
-        if start is not None:
-            avail = avail[avail.index >= start]
+        # start = self.criteria.get('start_year')
+        # if start is not None:
+        #     avail = avail[avail.index >= start]
 
-        end = self.criteria.get('end_year')
-        if end is not None:
-            avail = avail[avail.index <= end]
+        # end = self.criteria.get('end_year')
+        # if end is not None:
+        #     avail = avail[avail.index <= end]
 
         # Apply annual availability mask if needed
         valid_mask = pd.Series(True, index=avail.index)
@@ -105,22 +152,24 @@ class TSValidator:
 
         # Apply monthly availability check if specified
         if min_monthly_avail is not None:
-            raise NotImplementedError('`min_monthly_avail` not currently supported')
-            # df = self.ts.data.copy()  # DataFrame with datetime index and column 'Q'
-            # df['year'] = df.index.year
-            # df['month'] = df.index.month
-            # df['is_valid'] = ~df[self.ts.data_columns].isna()
+            # raise NotImplementedError('`min_monthly_avail` not currently supported')
+            monthly_availability = self.monthly_availability
+            # monthly_availability = monthly_availability.reindex(valid_mask.index)
+            monthly_availability = monthly_availability >= min_monthly_avail
+            n_valid_months = monthly_availability.sum(axis=1)
+            if min_valid_months_per_year is None: 
+                min_valid_months_per_year = 12
 
-            # # Count valid days per (year, month)
-            # monthly_valid_counts = df.groupby(['year', 'month'])['is_valid'].sum()
-            # # Total days per (year, month)
-            # monthly_total_days = df.groupby(['year', 'month'])['is_valid'].count()
-            # # Monthly availability [unstack() puts months into columns]
-            # monthly_avail = (monthly_valid_counts / monthly_total_days).unstack()
+            valid_mask &= n_valid_months >= int(min_valid_months_per_year)
 
-            # # Check that all months in a year meet the threshold
-            # monthly_valid_years = (monthly_avail >= min_monthly_avail).all(axis=1)
-            # valid_mask &= valid_mask.index.isin(monthly_valid_years[monthly_valid_years].index)
+        # Handle start/end years
+        start = self.criteria.get('start_year')
+        if start is not None:
+            valid_mask = valid_mask[valid_mask.index >= start]
+
+        end = self.criteria.get('end_year')
+        if end is not None:
+            valid_mask = valid_mask[valid_mask.index <= end]
 
         # return valid_mask[valid_mask].index
         self._valid_years = valid_mask[valid_mask].index
