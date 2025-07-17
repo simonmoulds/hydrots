@@ -376,12 +376,14 @@ class HydroTS:
         if data.shape[0] <= 1:
             raise ValueError("The input data must contain more than one row to be treated as a time series.")
 
-        self.data = self._format_data(data, use_water_year, use_local_water_year, wettest=wettest)
-        self.metadata = self._format_metadata(metadata)
+        data = self._standardize_data(data)
         try:
-            self.freq = pd.infer_freq(self.data.index)
+            self.freq = pd.infer_freq(data.index)
         except ValueError:
             self.freq = None
+
+        self.data = self._format_data(data, use_water_year, use_local_water_year, wettest=wettest)
+        self.metadata = self._format_metadata(metadata)
 
         # TODO change type of validator depending on application
         self.validator = TSValidator(self) #.data, self.data_columns)
@@ -412,7 +414,7 @@ class HydroTS:
         self.data = self._assign_water_year(self.data)
         self.validator.update()
 
-    def _format_data(self, data: pd.DataFrame, use_water_year: bool, use_local_water_year: bool, wettest: bool):
+    def _standardize_data(self, data: pd.DataFrame):
         data = self._standardize_columns(data)
         data = self._validate_columns(data)
 
@@ -425,6 +427,21 @@ class HydroTS:
         # Make time the index
         data = data.set_index('time')
         data.index.name = 'time'
+        return data 
+
+    def _format_data(self, data: pd.DataFrame, use_water_year: bool, use_local_water_year: bool, wettest: bool):
+        # data = self._standardize_columns(data)
+        # data = self._validate_columns(data)
+
+        # # Ensure time column is properly formatted
+        # data = data.dropna(subset='time')
+        # data['time'] = pd.to_datetime(data['time'])
+        # data['time'] = data['time'].dt.tz_localize(tz=None)
+        # data = data.sort_values(by='time')
+        
+        # # Make time the index
+        # data = data.set_index('time')
+        # data.index.name = 'time'
 
         if use_water_year:
             self.water_year_start = self._get_water_year_start(data, use_local_water_year, wettest=wettest)
