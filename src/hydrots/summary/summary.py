@@ -89,6 +89,8 @@ class BaseSummary:
             self.ts = None 
             self.data = None 
         elif hasattr(ts_or_df, "valid_data"):  # Likely a HydroTS object
+            if not ts_or_df.freq: 
+                raise ValueError('Cannot compute summary statistics without a valid frequency')
             self.ts = copy.deepcopy(ts_or_df)
             self.data = None #ts_or_df.valid_data.copy()
         # elif isinstance(ts_or_df, pd.DataFrame):
@@ -96,19 +98,6 @@ class BaseSummary:
         #     self.data = ts_or_df.copy()
         else:
             raise TypeError("Input must be a HydroTS object or a pandas DataFrame or None.")
-    # def __init__(self, ts_or_df: Optional[Union["HydroTS", pd.DataFrame]]=None, discharge_col=None): 
-    #     # if isinstance(ts_or_df, HydroTS):
-    #     if ts_or_df is None: 
-    #         self.ts = None 
-    #         self.data = None 
-    #     elif hasattr(ts_or_df, "valid_data"):  # Likely a HydroTS object
-    #         self.ts = ts_or_df
-    #         self.data = ts_or_df.valid_data.copy()
-    #     elif isinstance(ts_or_df, pd.DataFrame):
-    #         self.ts = None
-    #         self.data = ts_or_df.copy()
-    #     else:
-    #         raise TypeError("Input must be a HydroTS object or a pandas DataFrame or None.")
 
     def _compute_duration(self, data: pd.DataFrame) -> pd.DataFrame:
         """

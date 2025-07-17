@@ -226,7 +226,7 @@ class TSValidator:
         
         start = pd.Timestamp(start_year, month, day)
         end = pd.Timestamp(end_year + 1, month, day) - pd.Timedelta(days=1)
-        full_range = pd.date_range(start=start, end=end, freq='1D', tz=None) # FIXME
+        full_range = pd.date_range(start=start, end=end, freq=self.ts.freq, tz=None)
         df = df.reindex(full_range)
 
         df['month'] = df.index.month # Add month
@@ -265,7 +265,6 @@ class TSValidator:
         if 'min_availability' in self.criteria:
             if self.valid_years.empty:
                 return 0
-            # sorted_years = self.valid_years.index.sort_values()
             sorted_years = self.valid_years.sort_values()
             diffs = sorted_years.to_series().diff().fillna(1)
             group = (diffs != 1).cumsum()
@@ -379,7 +378,11 @@ class HydroTS:
 
         self.data = self._format_data(data, use_water_year, use_local_water_year, wettest=wettest)
         self.metadata = self._format_metadata(metadata)
-        self.freq = pd.infer_freq(self.data.index)
+        try:
+            self.freq = pd.infer_freq(self.data.index)
+        except ValueError:
+            self.freq = None
+
         # TODO change type of validator depending on application
         self.validator = TSValidator(self) #.data, self.data_columns)
 
@@ -429,8 +432,8 @@ class HydroTS:
             self.water_year_start = (1, 1) # Jan 1 
 
         if is_regular(data.index.to_series()): 
-            freq = data.index.to_series().diff().mode().iloc[0]
-            data = self._make_continuous(data, freq)
+            # freq = data.index.to_series().diff().mode().iloc[0]
+            data = self._make_continuous(data) #, freq)
         
         # Timestep duration (days)
         data['timestep'] = data.index.to_series().diff().shift(-1).dt.total_seconds() / 86400.
@@ -458,11 +461,16 @@ class HydroTS:
         data = data[valid_columns]
         return data 
 
-    def _make_continuous(self, data: pd.DataFrame, freq: Union[pd.Timedelta, str]):
+    def _make_continuous(self, data: pd.DataFrame): #, freq: Union[pd.Timedelta, str]):
         """Enforce a continuous time series at the specified resolution."""
+
+        # If the frequency could not be inferred then we simply return the original dataframe
+        if not self.freq:
+            return data 
+
         start = data.index[0]
         end = data.index[-1]
-        full_range = pd.date_range(start=start, end=end, freq=freq, tz=None)
+        full_range = pd.date_range(start=start, end=end, freq=self.freq, tz=None)
         data = data.reindex(full_range)
         data.index.name = 'time'
         return data
