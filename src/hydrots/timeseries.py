@@ -62,11 +62,18 @@ class TSValidator:
         self.criteria = {k: v for k, v in new_values.items() if v is not None}
 
         # Check consistency
-        if ((self.criteria.get('min_tot_years') is not None or self.criteria.get('min_consecutive_years') is not None)
-            and self.criteria.get('min_availability') is None):
-            raise ValueError(
-                "`min_availability` must be specified when using `min_tot_years` or `min_consecutive_years`"
+        if self.criteria.get("min_tot_years") is not None or self.criteria.get("min_consecutive_years") is not None:
+
+            has_availability = self.criteria.get("min_availability") is not None
+            has_monthly_combo = (
+                self.criteria.get("min_monthly_availability") is not None
+                and self.criteria.get("min_valid_months_per_year") is not None
             )
+            if not (has_availability or has_monthly_combo):
+                raise ValueError(
+                    "`min_availability` or `min_monthly_availability` with `min_valid_months_per_year` "
+                    "must be specified when using `min_tot_years` or `min_consecutive_years`"
+                )
 
     def _update_criteria(self, **kwargs):
         self._set_validity_criteria(

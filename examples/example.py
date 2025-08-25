@@ -34,6 +34,7 @@ ts = hts.HydroTS(x, metadata=None, use_water_year=False)
 ts.update_water_year(use_water_year=False) #, water_year_start=(7, 1))
 # ts.update_validity_criteria(start_year=1984, end_year=1994, min_tot_years=5, min_availability=0.4)
 ts.update_validity_criteria(start_year=1950, end_year=2025, min_tot_years=5, min_availability=0.8)
+# ts.update_intermittency_criteria(min_zero_flow_days=1, min_zero_flow_years=1)
 
 import hydrots.summary.summary as hsm
 importlib.reload(hsm)
