@@ -369,6 +369,10 @@ def compute_seasonality(group):
     group['day_scaled'] = (group['day'] / 365) * 2 * np.pi
     group['cos_day_scaled'] = np.cos(group['day_scaled'])
     group['sin_day_scaled'] = np.sin(group['day_scaled'])
+    qsum = group['Q'].sum() 
+    if qsum == 0:
+        return np.nan 
+
     mean_x_coord = (group['cos_day_scaled'] * group['Q']).sum() / group['Q'].sum()
     mean_y_coord = (group['sin_day_scaled'] * group['Q']).sum() / group['Q'].sum()
     R =  (mean_x_coord**2 + mean_y_coord **2)**0.5  
