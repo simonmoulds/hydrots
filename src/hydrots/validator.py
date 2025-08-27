@@ -206,12 +206,12 @@ class TSValidator:
         return monthly_availability
 
     def _get_n_tot_years(self) -> Optional[int]:
-        if 'min_availability' in self.criteria:
+        if 'min_availability' in self.criteria or 'min_monthly_availability' in self.criteria:
             return len(self.valid_years) #(self.availability >= self.criteria['min_availability']).sum()
         return None
 
     def _get_n_consecutive_years(self) -> Optional[int]:
-        if 'min_availability' in self.criteria:
+        if 'min_availability' in self.criteria or 'min_monthly_availability' in self.criteria:
             if self.valid_years.empty:
                 return 0
             # sorted_years = self.valid_years.index.sort_values()
