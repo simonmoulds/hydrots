@@ -550,7 +550,7 @@ def compute_slope_fdc(group, lower_q=0.33, upper_q=0.66):
     # Determine if the fdc has a slope at this tage and return the
     # corresponding values
     if qlower == 0 and qupper == 0:
-        return 0
+        return np.nan
     else:
         denominator = upper_q - lower_q
         # if qupper == 0 and not qlower == 0:
@@ -578,7 +578,7 @@ def compute_dvia(group):
     group_month = group_month.groupby(group_month.index.month)['Q_mean'].mean()
     q_max = group_month.max()
     q_min = group_month.min()
-    return (q_max - q_min) / q_avg
+    return (q_max - q_min) / q_avg if q_avg > 0 else np.nan
 
 
 def compute_dvic(group): 
@@ -587,7 +587,7 @@ def compute_dvic(group):
     group_month = group['Q'].resample('MS').mean() 
     q_05 = group_month.min()
     q_95 = group_month.max()
-    return (q_95 - q_05) / q_avg 
+    return (q_95 - q_05) / q_avg if q_avg > 0 else np.nan
 
 
 class _GSIM(BaseSummary): 
