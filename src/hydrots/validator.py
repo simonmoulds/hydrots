@@ -206,6 +206,7 @@ class TSValidator:
         return monthly_availability
 
     def _get_n_tot_years(self) -> Optional[int]:
+        print("Hello, world")
         if 'min_availability' in self.criteria or 'min_monthly_availability' in self.criteria:
             return len(self.valid_years) #(self.availability >= self.criteria['min_availability']).sum()
         return None
