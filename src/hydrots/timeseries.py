@@ -397,6 +397,7 @@ class HydroTS:
 
     def update_validity_criteria(self, **kwargs): 
         self.validator.update(**kwargs)
+        # self.data['valid'] = self.data['water_year'].isin(self.validator.valid_years)
 
     def update_intermittency_criteria(self, min_zero_flow_days: int = 5, min_zero_flow_years: int = 1): 
         if min_zero_flow_years > self.n_years: 
@@ -460,8 +461,11 @@ class HydroTS:
             data = self._make_continuous(data) #, freq)
         
         # Timestep duration (days)
-        data['timestep'] = data.index.to_series().diff().shift(-1).dt.total_seconds() / 86400.
+        # data['timestep'] = data.index.to_series().diff().shift(-1).dt.total_seconds() / 86400.
+        data = self._assign_time_step(data)
         data = self._assign_water_year(data)
+
+        # data['valid'] = True
         return data 
 
     def _standardize_columns(self, data: pd.DataFrame):
@@ -576,6 +580,10 @@ class HydroTS:
                 return dt.year - 1
         wy = pd.Series(data.index).apply(lambda x: get_water_year(x, *self.water_year_start))
         data['water_year'] = wy.values
+        return data
+
+    def _assign_time_step(self, data: pd.DataFrame): 
+        data['timestep'] = data.index.to_series().diff().shift(-1).dt.total_seconds() / 86400.
         return data
 
     @property 

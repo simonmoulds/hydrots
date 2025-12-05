@@ -1,6 +1,7 @@
 # Dev
 src/hydrots/MARRMoT/
 data/
+examples/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

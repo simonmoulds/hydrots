@@ -1,4 +1,5 @@
 
+import math
 import pandas as pd 
 import numpy as np
 import itertools
@@ -116,7 +117,7 @@ class BaseSummary:
             A DataFrame with group index and 'duration_days'.
         """
         return (
-            data.groupby('group')[['time', 'Q']] # FIXME should be `value` not `Q`
+            data.groupby('group', sort=False)[['time', 'Q']] # FIXME should be `value` not `Q`
             .agg(
                 summary_period_duration=('time', lambda x: x.max() - x.min() + ((x.iloc[1] - x.iloc[0]) if len(x) > 1 else pd.Timedelta(0))),
                 data_availability=('Q', lambda x: x.notna().sum() / len(x) if len(x) > 0 else 0)
@@ -125,7 +126,7 @@ class BaseSummary:
 
     def _get_grouped_data(self, data, by_year=False, rolling=None, center=False, by_season=False, seasons=None, by_month=False):
 
-        data = data.reset_index(drop=False)
+        # data = data.reset_index(drop=False)
         if by_season or by_month: 
 
             if by_season:
@@ -192,13 +193,13 @@ class BaseSummary:
     def _compute(self, data, **kwargs): 
         raise NotImplementedError
 
-    def _format_data(self, by_season=False, seasons=['MAM', 'JJA', 'SON', 'DJF'], by_month=False): 
+    def _format_data(self, by_season=False, seasons=['MAM', 'JJA', 'SON', 'DJF'], by_month=False, **kwargs): 
         if by_season:
             seasons_dict = validate_seasons(seasons)
             first_season = next(iter(seasons_dict))
-            season_start_index = seasons_dict[first_season][0]
+            season_start_index = seasons_dict[first_season][0] # E.g. MAM -> 3
             # Check the water year and update if necessary
-            if self.ts.water_year_start[0] != season_start_index: 
+            if self.ts.water_year_start[0] != season_start_index: # water_year_start is a tuple of (month, day)
                 self.ts.update_water_year(use_water_year=True, water_year_start=(season_start_index, 1))
 
             data = self.ts.valid_data.copy()
@@ -209,7 +210,9 @@ class BaseSummary:
             valid_seasons = valid_seasons[valid_mask]
             new_index = pd.concat([pd.Series(pd.date_range(start, end, freq=self.ts.freq, tz=None), name='time') for start, end in valid_seasons])
             new_index = pd.DatetimeIndex(new_index)
-            data = data.reindex(new_index)
+            data = data.reindex(new_index) # This causes problems, because all new rows are assigned NaN 
+            data = self.ts._assign_water_year(data)
+            data = self.ts._assign_time_step(data)
 
         elif by_month: 
             if self.ts.water_year_start[0] != 1: 
@@ -248,7 +251,7 @@ class EventBasedSummary(BaseSummary):
 
     def _simple_flow_events(self, data, event_condition, **kwargs): 
         data = data.reset_index(drop=False)
-        vals = self.data['Q'].values 
+        vals = data['Q'].values 
         is_event = event_condition(vals, **kwargs)
         data['event_duration'] = is_event * data['timestep'] # timestep has units of days
         data = data.set_index('time')
@@ -353,6 +356,7 @@ class EventBasedSummary(BaseSummary):
             return events, summary
         else:
             return events
+
 def format_quantile(quantile: Union[float, list]) -> str:
     if isinstance(quantile, float): 
         quantile = [quantile]
@@ -362,10 +366,13 @@ def format_quantile(quantile: Union[float, list]) -> str:
 
 def compute_seasonality(group): 
     # https://doi.org/10.5194/hess-29-2851-2025
-    # Here we calculate the concentration, R, described in Berghuijs et al. (2025)
+    # Here we calculate the concentration, R, and center of mass timing, t_Q, described in Berghuijs et al. (2025)
     group = group.sort_index()
-    dates = group['time'] #pd.Series(group.index)
-    group['day'] = round(365*dates.dt.dayofyear / dates.dt.is_leap_year.apply(lambda x: 366 if x else 365)).values
+    # dates = group['time'] #pd.Series(group.index)
+    # group['day'] = round(365*dates.dt.dayofyear / dates.dt.is_leap_year.apply(lambda x: 366 if x else 365)).values
+    # group['day'] = [day for day in range(1, group.shape[0] + 1)] # Day of water year 
+    group["day"] = group.groupby('water_year')['time'].transform(lambda g: (g - g.min()).dt.total_seconds() / 86400 + 1)
+    group["day"] = group.groupby('water_year')['day'].transform(lambda g: (365 * g / g.max()))
     group['day_scaled'] = (group['day'] / 365) * 2 * np.pi
     group['cos_day_scaled'] = np.cos(group['day_scaled'])
     group['sin_day_scaled'] = np.sin(group['day_scaled'])
@@ -375,9 +382,15 @@ def compute_seasonality(group):
 
     mean_x_coord = (group['cos_day_scaled'] * group['Q']).sum() / group['Q'].sum()
     mean_y_coord = (group['sin_day_scaled'] * group['Q']).sum() / group['Q'].sum()
-    R =  (mean_x_coord**2 + mean_y_coord **2)**0.5  
-    return R
+    R = (mean_x_coord**2 + mean_y_coord **2)**0.5
 
+    # Center of mass timing, t_Q
+    angle = np.arctan2(mean_y_coord, mean_x_coord)
+    if angle < 0:
+        angle += 2 * np.pi
+    t_Q = (angle / (2 * np.pi)) # Fraction of water year 
+    # t_Q *= 365 # Map angle back to day of year
+    return R, t_Q
 
 def compute_cv(group): 
     """Coefficient of variation."""
@@ -707,7 +720,14 @@ class _Autocorrelation(BaseSummary):
 
 class _Concentration(BaseSummary): 
     def _compute(self, data): 
-        return data.groupby('group').apply(compute_seasonality).to_frame('CONC')
+        # return data.groupby('group').apply(compute_seasonality).to_frame('CONC')
+        out = (
+            data.groupby("group")
+                .apply(compute_seasonality)
+                .apply(pd.Series)              # expand tuple into columns
+                .rename(columns={0: "CONC", 1: "TIMING"})
+        )
+        return out
 
 class _FlowQuantile(BaseSummary): 
     def _compute(self, data, quantile): 
@@ -975,11 +995,10 @@ class _NoFlowFraction(EventBasedSummary):
 class _HighFlowFraction(EventBasedSummary): 
     def compute(self, threshold, by_year=False, rolling=None, center=False): 
 
-        data = self._format_data(by_year=by_year)
         def highflow(vals, threshold): 
             return vals > threshold
 
-        def compute_high_flow_fraction(threshold):
+        def compute_high_flow_fraction(data, threshold):
             data = self._simple_flow_events(data, highflow, threshold=threshold)
             data['event_volume_above_threshold'] = (data['Q'] - threshold) * data['event_duration'] * 86400.
             data = self._get_grouped_data(data, by_year=by_year, rolling=rolling, center=center)
@@ -991,14 +1010,15 @@ class _HighFlowFraction(EventBasedSummary):
             result['highflow_fraction'] = result['event_duration'] / result['summary_period_duration']
             return result
         
+        data = self._format_data(by_year=by_year)
         if isinstance(threshold, dict): 
             result_list = []
             for threshold_name, threshold_value in threshold.items():
-                result = compute_high_flow_fraction(threshold_value)
+                result = compute_high_flow_fraction(data, threshold_value)
                 result_list.append(result)
             result = pd.concat(result_list, axis=0, keys=threshold.keys(), names=('threshold', 'group'))
         else:
-            result = compute_high_flow_fraction(threshold)
+            result = compute_high_flow_fraction(data, threshold)
 
         return result[['highflow_fraction', 'event_duration', 'event_volume_above_threshold']]
 
@@ -1146,7 +1166,7 @@ def slope_flow_duration_curve(ts_or_df, **kwargs):
 
 @register_summary_method
 def baseflow_index(ts_or_df, method='LH', **kwargs): 
-    return BFI(ts_or_df).compute(method=method, **kwargs)
+    return _BFI(ts_or_df).compute(method=method, **kwargs)
 
 @register_summary_method 
 def no_flow_fraction(ts_or_df, threshold, **kwargs):
@@ -1173,6 +1193,10 @@ def discharge_variability_index(ts_or_df, **kwargs):
 @register_summary_method 
 def cumulative_discharge_variability_index(ts_or_df, **kwargs): 
     return _DVIc(ts_or_df).compute(**kwargs)
+
+@register_summary_method 
+def seasonality(ts_or_df, **kwargs): 
+    return _Concentration(ts_or_df).compute(**kwargs)
 
 # FIXME this currently makes assumption that timeseries has daily resolution
 class TSSummary:
@@ -1643,9 +1667,10 @@ def get_season_period(date, seasons_dict):
 def assign_season_label(date, seasons_dict):
     """Return season label for a given date."""
     month = date.month
-    for season, months in seasons_dict.items():
+    for idx, (season, months) in enumerate(seasons_dict.items(), start=1):
         if month in months:
-            return season
+            return f"{idx}-{season}"
+            # return season
     return None
     # if month in [3, 4, 5]:
     #     season = 'MAM'
